@@ -1,0 +1,36 @@
+name: Helm
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "chart/ping_exporter/**"
+
+jobs:
+  publish:
+    name: Publish Helm chart
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Run Helm lint
+        run: |
+          helm lint chart/ping_exporter
+
+      - name: Login to Quay.io
+        run: |
+          helm registry login quay.io \
+            --username ${{ secrets.QUAY_USERNAME }} \
+            --password ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Package and push Helm chart
+        run: |
+          echo "Packaging and pushing Helm chart..."
+          CHART_FILE=$(helm package chart/ping_exporter | awk -F': ' '{print $2}')
+          helm push "$CHART_FILE" oci://quay.io/zebbra/charts

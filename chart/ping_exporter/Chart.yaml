@@ -1,6 +1,6 @@
 apiVersion: v2
 name: ping_exporter
-description: A Helm chart for ping_exporter - ICMP ping prometheus exporter
+description: A Helm chart for Prometheus ping_exporter
 
 # A chart can be either an 'application' or a 'library' chart.
 #
