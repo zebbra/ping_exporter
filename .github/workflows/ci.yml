@@ -54,7 +54,7 @@ jobs:
           fi
 
       - name: Run tests
-        run: sudo go test -v -race ./...
+        run: sudo -E go test -v -race ./...
 
   build:
     name: Build
