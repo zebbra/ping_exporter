@@ -24,7 +24,7 @@ FROM alpine:latest
 # Install ca-certificates for SSL/TLS
 RUN apk --no-cache add ca-certificates
 
-WORKDIR /root/
+WORKDIR /app
 
 # Copy the binary from builder stage
 COPY --from=builder /app/ping_exporter .
@@ -37,4 +37,4 @@ EXPOSE 9115
 USER root
 
 # Run the exporter
-ENTRYPOINT [ "/root/ping_exporter" ]
+ENTRYPOINT [ "/app/ping_exporter" ]
