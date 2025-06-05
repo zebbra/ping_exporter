@@ -1,0 +1,22 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "ping_exporter.fullname" . }}
+  labels:
+    {{- include "ping_exporter.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.prometheusRule.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  groups:
+  - name: {{ include "ping_exporter.fullname" . }}.rules
+    rules:
+    {{- with .Values.prometheusRule.rules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "ping_exporter.fullname" . }}-test-connection"
+  labels:
+    {{- include "ping_exporter.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  containers:
+    - name: ping-exporter-test
+      image: curlimages/curl:latest
+      command: 
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Testing ping exporter endpoints..."
+          
+          # Test metrics endpoint
+          echo "Testing /metrics endpoint..."
+          curl -f "{{ include "ping_exporter.fullname" . }}:{{ .Values.service.port }}/metrics" | head -10
+          
+          # Test probe endpoint with a simple target
+          echo "Testing /probe endpoint with google.com..."
+          curl -f "{{ include "ping_exporter.fullname" . }}:{{ .Values.service.port }}/probe?target=google.com&count=1&timeout=5s"
+          
+          # Test probe endpoint with debug
+          echo "Testing /probe endpoint with debug enabled..."
+          curl -f "{{ include "ping_exporter.fullname" . }}:{{ .Values.service.port }}/probe?target=8.8.8.8&count=1&debug=true&timeout=5s"
+          
+          echo "All tests passed!"
+      resources:
+        limits:
+          cpu: 100m
+          memory: 64Mi
+        requests:
+          cpu: 50m
+          memory: 32Mi
+  restartPolicy: Never
