@@ -16,7 +16,7 @@ on:
 
 jobs:
   test:
-    name: Test
+  name: Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -54,7 +54,7 @@ jobs:
           fi
 
       - name: Run tests
-        run: go test -v -race ./...
+        run: sudo go test -v -race ./...
 
   build:
     name: Build
