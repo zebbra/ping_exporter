@@ -131,12 +131,12 @@ func TestHandleProbe(t *testing.T) {
 func TestSetupHandlers(t *testing.T) {
 	// Initialize route prefix for testing
 	*routePrefix = "/"
-	
+
 	logger := promslog.New(&promslog.Config{})
-	
+
 	// Reset HTTP handlers
 	http.DefaultServeMux = http.NewServeMux()
-	
+
 	setupHandlers(logger)
 
 	tests := []struct {
@@ -212,14 +212,14 @@ func TestParseParameters(t *testing.T) {
 			name:   "default values",
 			params: url.Values{"target": {"127.0.0.1"}},
 			expected: map[string]interface{}{
-				"count":       3,
-				"interval":    time.Second,
-				"packetSize":  64,
-				"timeout":     time.Second * 5,
-				"ipProtocol":  "ip4",
-				"sourceIP":    "",
+				"count":        3,
+				"interval":     time.Second,
+				"packetSize":   64,
+				"timeout":      time.Second * 5,
+				"ipProtocol":   "ip4",
+				"sourceIP":     "",
 				"dontFragment": false,
-				"debug":       false,
+				"debug":        false,
 			},
 		},
 		{
@@ -355,7 +355,7 @@ func TestProbeMetricsFormat(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	
+
 	// Check for required Prometheus metrics
 	requiredMetrics := []string{
 		"probe_success",

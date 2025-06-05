@@ -11,10 +11,10 @@ import (
 
 func TestResolveTarget(t *testing.T) {
 	tests := []struct {
-		name     string
-		target   string
-		network  string
-		wantErr  bool
+		name    string
+		target  string
+		network string
+		wantErr bool
 	}{
 		{
 			name:    "valid IPv4 address",
@@ -166,10 +166,10 @@ func TestRegisterPingMetrics(t *testing.T) {
 	}
 
 	expectedMetrics := map[string]bool{
-		"probe_ping_packets_sent":     false,
-		"probe_ping_packets_received": false,
+		"probe_ping_packets_sent":      false,
+		"probe_ping_packets_received":  false,
 		"probe_ping_packet_loss_ratio": false,
-		"probe_ping_rtt_seconds":      false,
+		"probe_ping_rtt_seconds":       false,
 	}
 
 	for _, mf := range metricFamilies {

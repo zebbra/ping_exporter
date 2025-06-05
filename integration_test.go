@@ -351,11 +351,11 @@ func TestIntegrationRTTMetrics(t *testing.T) {
 	}
 
 	bodyStr := string(body)
-	
+
 	// Check if we got successful pings (RTT metrics are only present when packets are received)
-	if strings.Contains(bodyStr, "probe_ping_packets_received") && 
-	   !strings.Contains(bodyStr, "probe_ping_packets_received 0") {
-		
+	if strings.Contains(bodyStr, "probe_ping_packets_received") &&
+		!strings.Contains(bodyStr, "probe_ping_packets_received 0") {
+
 		rttMetrics := []string{
 			"probe_ping_rtt_seconds{type=\"best\"}",
 			"probe_ping_rtt_seconds{type=\"worst\"}",
@@ -381,7 +381,7 @@ func TestIntegrationConcurrentRequests(t *testing.T) {
 	for i := 0; i < concurrency; i++ {
 		go func(id int) {
 			defer func() { done <- true }()
-			
+
 			resp, err := http.Get(fmt.Sprintf("%s/probe?target=127.0.0.1&count=1", testBaseURL))
 			if err != nil {
 				t.Errorf("Goroutine %d failed: %v", id, err)
