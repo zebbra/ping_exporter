@@ -2,7 +2,6 @@
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/zebbra/ping_exporter)](https://goreportcard.com/report/github.com/zebbra/ping_exporter)
 [![Docker Repository on Quay](https://quay.io/repository/zebbra/ping_exporter/status)](https://quay.io/repository/zebbra/ping_exporter)
-[![Docker Pulls](https://img.shields.io/docker/pulls/zebbra/ping_exporter.svg?maxAge=604800)](https://hub.docker.com/r/zebbra/ping_exporter)
 
 The ping exporter allows probing of network targets using ICMP ping with configurable packet counts and detailed statistics reporting. It implements the multi-target exporter pattern where targets are specified via URL parameters, similar to the blackbox exporter.
 
