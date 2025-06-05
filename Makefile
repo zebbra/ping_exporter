@@ -1,8 +1,11 @@
-.PHONY: build clean test fmt vet run
+.PHONY: build clean test fmt vet run docker-build docker-push release-snapshot release goreleaser-check
 
 BINARY_NAME=ping_exporter
 BINARY_PATH=dist/$(BINARY_NAME)
 GO_FILES=$(shell find . -name "*.go" -type f)
+VERSION ?= $(shell git describe --tags --always --dirty)
+REGISTRY ?= quay.io
+IMAGE_NAME ?= zebbra/ping_exporter
 
 all: fmt vet build
 
@@ -38,5 +41,23 @@ deps:
 
 docker-build:
 	docker build -t ping_exporter .
+
+docker-push:
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-t $(REGISTRY)/$(IMAGE_NAME):$(VERSION) \
+		-t $(REGISTRY)/$(IMAGE_NAME):latest \
+		--push .
+
+goreleaser-check:
+	goreleaser check
+
+release-snapshot:
+	goreleaser release --clean --snapshot
+
+release:
+	goreleaser release --clean
+
+release-dry-run:
+	goreleaser release --skip-publish --clean
 
 .DEFAULT_GOAL := all

@@ -140,6 +140,49 @@ probe_ping_rtt_seconds{type="range"} 0.003333
 
     docker build -t ping_exporter .
 
+## CI/CD and Releases
+
+This project uses GitHub Actions for continuous integration and automated releases.
+
+### Automated Releases
+
+Releases are automatically created when a Git tag is pushed:
+
+```bash
+git tag -a v1.0.0 -m "Release version 1.0.0"
+git push origin v1.0.0
+```
+
+This triggers:
+- Automated testing
+- Multi-platform binary builds (Linux, macOS, Windows)
+- Docker image builds for `linux/amd64` and `linux/arm64`
+- Publication to `quay.io/zebbra/ping_exporter`
+- GitHub release creation with binaries and packages
+
+### Docker Images
+
+Official Docker images are available at:
+- `quay.io/zebbra/ping_exporter:latest`
+- `quay.io/zebbra/ping_exporter:v1.0.0` (version tags)
+
+### Development
+
+For local development and testing:
+
+```bash
+# Test GoReleaser configuration
+make goreleaser-check
+
+# Build snapshot release locally
+make release-snapshot
+
+# Run tests
+make test
+```
+
+See [CI_CD.md](CI_CD.md) for detailed information about the CI/CD setup.
+
 ## Configuration
 
 The ping exporter is configured via URL parameters for ping settings and command-line flags for server configuration. All ping parameters are specified dynamically through the probe URL.

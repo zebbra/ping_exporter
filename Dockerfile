@@ -6,7 +6,7 @@ RUN apk --no-cache add ca-certificates
 
 WORKDIR /app
 
-# Copy go mod files
+# Copy go mod files first for better caching
 COPY go.mod go.sum ./
 
 # Download dependencies
@@ -32,7 +32,8 @@ COPY --from=builder /app/ping_exporter .
 # Expose port
 EXPOSE 9115
 
-# Run as non-root user would be ideal, but ping requires NET_RAW capability
+# Ping requires NET_RAW capability, so we run as root
+# Container should be run with --cap-add=NET_RAW
 USER root
 
 # Run the exporter

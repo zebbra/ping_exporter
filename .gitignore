@@ -7,6 +7,10 @@ dist/
 *.dylib
 ping_exporter
 
+# GoReleaser artifacts
+.goreleaser
+goreleaser
+
 # Test binary, built with `go test -c`
 *.test
 
