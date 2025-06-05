@@ -37,4 +37,4 @@ EXPOSE 9115
 USER root
 
 # Run the exporter
-CMD ["./ping_exporter"]
+ENTRYPOINT [ "/root/ping_exporter" ]
