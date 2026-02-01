@@ -123,6 +123,8 @@ tolerations: []
 
 affinity: {}
 
+topologySpreadConstraints: []
+
 # Ping exporter specific configuration
 pingExporter:
   # Command-line arguments for the ping exporter
@@ -141,7 +143,7 @@ pingExporter:
     # Maximum allowed values
     maxCount: 100
     maxPacketSize: 65507
-  
+
   # Web configuration file for TLS/basic auth (optional)
   webConfig:
     enabled: false
