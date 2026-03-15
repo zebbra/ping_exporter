@@ -80,14 +80,16 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 		return false
 	}
 
-	logger.Info("Target resolved", "target", target, "ip", dstAddr.String())
+	logger.Debug("Target resolved", "target", target, "ip", dstAddr.String())
 
 	// Perform ping
 	stats, err := performPing(ctx, dstAddr, sourceIP, count, interval, packetSize, dontFragment, logger)
 	if err != nil {
-		logger.Error("Ping failed", "err", err)
+		logger.Info("Ping failed", "err", err)
 		return false
 	}
+
+	logger.Info("Ping complete", "target", target, "sent", stats.PacketsSent, "received", stats.PacketsReceived, "loss", stats.PacketLoss, "avg_rtt", stats.AvgRTT)
 
 	// Register metrics
 	registerPingMetrics(registry, stats)
@@ -133,10 +135,12 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 		var err error
 		conn, err = icmp.ListenPacket("ip6:ipv6-icmp", srcIP.String())
 		if err != nil {
+			ip6Err := err
+			logger.Debug("Privileged IPv6 ICMP (ip6:ipv6-icmp) unavailable, trying unprivileged (udp6)", "err", ip6Err)
 			// Try unprivileged
 			conn, err = icmp.ListenPacket("udp6", srcIP.String())
 			if err != nil {
-				return nil, fmt.Errorf("failed to create IPv6 ICMP socket: %w", err)
+				return nil, fmt.Errorf("failed to create IPv6 ICMP socket: raw ip6:ipv6-icmp failed (%v); unprivileged udp6 also failed (check net.ipv6.conf.all.disable_ipv6): %w", ip6Err, err)
 			}
 			useUDP = true
 		}
@@ -166,16 +170,17 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 			// Try unprivileged first (works better in Docker)
 			conn, err = icmp.ListenPacket("udp4", "0.0.0.0")
 			if err != nil {
-				logger.Debug("Failed to create unprivileged IPv4 ICMP socket, trying privileged", "err", err)
+				udp4Err := err
+				logger.Debug("Unprivileged ICMP (udp4) unavailable, trying raw socket (requires NET_RAW/root)", "err", udp4Err)
 				// Try privileged
 				conn, err = icmp.ListenPacket("ip4:icmp", "0.0.0.0")
 				if err != nil {
-					return nil, fmt.Errorf("failed to create IPv4 ICMP socket: %w", err)
+					return nil, fmt.Errorf("failed to create IPv4 ICMP socket: unprivileged udp4 failed (%v); raw ip4:icmp also failed (requires CAP_NET_RAW or root): %w", udp4Err, err)
 				}
-				logger.Info("Using privileged IPv4 ICMP socket")
+				logger.Debug("Using privileged IPv4 ICMP socket")
 			} else {
 				useUDP = true
-				logger.Info("Using unprivileged IPv4 ICMP socket")
+				logger.Debug("Using unprivileged IPv4 ICMP socket")
 			}
 		}
 	}
@@ -199,7 +204,7 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 		stats.PacketsSent++
 		seq := getICMPSequence()
 
-		logger.Info("Sending ping packet", "seq", seq, "packet", i+1, "of", count)
+		logger.Debug("Sending ping packet", "seq", seq, "packet", i+1, "of", count)
 
 		// Create a timeout context for this individual ping
 		pingCtx, cancel := context.WithTimeout(ctx, time.Second*2)
@@ -207,11 +212,11 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 		cancel()
 
 		if err != nil {
-			logger.Error("Ping failed", "seq", seq, "err", err)
+			logger.Debug("Ping failed", "seq", seq, "err", err)
 		} else {
 			stats.PacketsReceived++
 			stats.RTTs = append(stats.RTTs, rtt)
-			logger.Info("Ping successful", "seq", seq, "rtt", rtt)
+			logger.Debug("Ping successful", "seq", seq, "rtt", rtt)
 		}
 
 		// Wait for interval (except for last packet)

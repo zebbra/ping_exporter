@@ -31,10 +31,9 @@ Then:
     docker run --rm \
       -p 9115:9115 \
       --name ping_exporter \
-      --cap-add=NET_RAW \
       quay.io/zebbra/ping_exporter:latest
 
-**Important**: The `--cap-add=NET_RAW` capability is required for ICMP ping functionality.
+See the [Permissions](#permissions) section for when `--cap-add=NET_RAW` is needed.
 
 ### Checking the results
 
@@ -326,16 +325,50 @@ scrape_configs:
 
 ## Permissions
 
-The ping exporter requires elevated privileges to send ICMP packets:
+The ping exporter uses two different socket types depending on the environment:
 
-### Linux
-Run as root or grant the `CAP_NET_RAW` capability:
+| Socket | Kernel mechanism | Requires |
+|--------|-----------------|----------|
+| `udp4`/`udp6` (unprivileged) | `SOCK_DGRAM` ICMP — kernel manages ICMP ID | `ping_group_range` includes your GID |
+| `ip4:icmp`/`ip6:ipv6-icmp` (raw) | `SOCK_RAW` ICMP — full packet control | `CAP_NET_RAW` or root |
+
+The exporter tries the unprivileged UDP socket first. If that fails it falls back to the raw socket. Which method was used is visible in the logs at `debug` level.
+
+### Docker
+
+Docker containers inherit the host kernel's `ping_group_range` sysctl, so
+if the host allows unprivileged ping sockets, **no extra capabilities are
+needed** and `udp4`/`udp6` is used automatically.
+
+If the host does not have `ping_group_range` configured (or you want to
+use raw ICMP regardless), add `NET_RAW`:
+
+```yaml
+ping-exporter:
+  image: quay.io/zebbra/ping_exporter:latest
+  cap_add:
+    - NET_RAW
+```
+
+### Bare Linux — Option 1: unprivileged ping socket (recommended)
+
+No capabilities needed. Allow the unprivileged ICMP socket via sysctl:
+
+```bash
+# Allow all users (persist across reboots via /etc/sysctl.conf)
+sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+```
+
+This is the cleanest approach — no binary capabilities required. Many modern
+distros (Ubuntu 20.04+, Debian 11+) already have this set by default.
+
+### Bare Linux — Option 2: `CAP_NET_RAW`
+
+Grant the raw socket capability directly to the binary:
+
 ```bash
 sudo setcap cap_net_raw+ep ./ping_exporter
 ```
-
-### Docker
-Use the `--cap-add=NET_RAW` flag when running the container.
 
 ### Windows
 Run as Administrator.
