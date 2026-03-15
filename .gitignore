@@ -7,3 +7,4 @@ goreleaser
 
 # Test binary, built with `go test -c`
 *.test
+ping_exporter

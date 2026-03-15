@@ -199,17 +199,30 @@ The ping exporter is configured via URL parameters for ping settings and command
 | `interval` | Time interval between packets | `1s` | `500ms`, `2s` |
 | `packet_size` | Size of the ping packet payload in bytes | `64` | `32`, `1024` |
 | `timeout` | Maximum duration for the entire probe | `5s` | `10s`, `30s` |
-| `ip_protocol` | IP protocol preference: `ip4`, `ip6`, or `auto` | `ip4` | `ip6` |
+| `ip_protocol` | IP protocol: `ip4`, `ip6`, or `auto` (see below) | `auto` | `ip6` |
 | `source_ip` | Source IP address for outgoing packets | *auto* | `192.168.1.100` |
 | `dont_fragment` | Set the Don't Fragment bit in IPv4 header | `false` | `true` |
 | `debug` | Enable debug output | `false` | `true` |
 | `log_level` | Override log level for this probe | *global* | `debug`, `info` |
 
+### IP Protocol / Auto-detection
+
+The `ip_protocol` parameter (and the `--ping.default-ip-protocol` flag) controls how the target is resolved:
+
+| Value | Behaviour |
+|-------|-----------|
+| `auto` *(default)* | Literal IPv4/IPv6 addresses are detected by family. For hostnames, AAAA is tried first (IPv6-first, consistent with RFC 8305 / Happy Eyeballs); falls back to A if no AAAA record exists. |
+| `ip4` | Always resolve as IPv4 (A record). Literal IPv6 addresses will fail. |
+| `ip6` | Always resolve as IPv6 (AAAA record). |
+
 ### Example URLs
 
 ```
-# Basic ping with defaults (3 packets, 1s interval, 64 bytes)
+# Basic ping — auto-detects address family
 http://localhost:9115/probe?target=google.com
+
+# Literal IPv6 address — auto-detected, no ip_protocol needed
+http://localhost:9115/probe?target=2600::
 
 # Custom packet count and interval
 http://localhost:9115/probe?target=8.8.8.8&count=10&interval=500ms
@@ -217,8 +230,11 @@ http://localhost:9115/probe?target=8.8.8.8&count=10&interval=500ms
 # Large packets with longer timeout
 http://localhost:9115/probe?target=prometheus.io&count=5&packet_size=1024&timeout=10s
 
-# IPv6 ping
-http://localhost:9115/probe?target=2001:4860:4860::8888&ip_protocol=ip6
+# Force IPv4 for a dual-stack host
+http://localhost:9115/probe?target=google.com&ip_protocol=ip4
+
+# Force IPv6 for a dual-stack host
+http://localhost:9115/probe?target=google.com&ip_protocol=ip6
 
 # Debug mode with specific source IP
 http://localhost:9115/probe?target=example.com&source_ip=192.168.1.100&debug=true
@@ -236,6 +252,7 @@ http://localhost:9115/probe?target=example.com&source_ip=192.168.1.100&debug=tru
 | `--ping.default-interval` | Default interval when not specified | `1s` |
 | `--ping.default-packet-size` | Default packet size when not specified | `64` |
 | `--ping.default-timeout` | Default timeout when not specified | `5s` |
+| `--ping.default-ip-protocol` | Default IP protocol when not specified in probe URL (`ip4`, `ip6`, `auto`) | `auto` |
 | `--ping.max-count` | Maximum allowed packet count | `100` |
 | `--ping.max-packet-size` | Maximum allowed packet size | `65507` |
 
@@ -384,7 +401,7 @@ Run as root or use `sudo`.
 
 2. **No response from target**: Check if the target host responds to ping from the command line first.
 
-3. **IPv6 connectivity issues**: Ensure your system has proper IPv6 configuration if using `ip6` or `auto` protocols.
+3. **IPv6 connectivity issues**: In `auto` mode the exporter tries AAAA first for hostnames and auto-detects literal IPv6 addresses. If IPv6 is not available on your system, use `--ping.default-ip-protocol=ip4` or pass `ip_protocol=ip4` per probe.
 
 4. **High packet loss**: Consider increasing the timeout or reducing the packet count/interval for unreliable networks.
 

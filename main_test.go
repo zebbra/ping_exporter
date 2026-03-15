@@ -109,12 +109,13 @@ func TestHandleProbe(t *testing.T) {
 		},
 	}
 
+	caps := DetectCapabilities(logger)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/probe?"+tt.queryParams, nil)
 			w := httptest.NewRecorder()
 
-			handleProbe(w, req, logger)
+			handleProbe(w, req, logger, caps)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
@@ -137,7 +138,7 @@ func TestSetupHandlers(t *testing.T) {
 	// Reset HTTP handlers
 	http.DefaultServeMux = http.NewServeMux()
 
-	setupHandlers(logger)
+	setupHandlers(logger, DetectCapabilities(logger))
 
 	tests := []struct {
 		name           string
@@ -272,7 +273,7 @@ func TestParseParameters(t *testing.T) {
 
 			// This test verifies parameter parsing by checking the behavior
 			// We can't directly test the parsing logic without refactoring handleProbe
-			handleProbe(w, req, logger)
+			handleProbe(w, req, logger, DetectCapabilities(logger))
 
 			// Verify the request was processed successfully (status 200)
 			if w.Code != http.StatusOK {
@@ -298,7 +299,7 @@ func TestProbeTimeout(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	start := time.Now()
-	handleProbe(w, req, logger)
+	handleProbe(w, req, logger, DetectCapabilities(logger))
 	duration := time.Since(start)
 
 	if w.Code != http.StatusOK {
@@ -330,7 +331,7 @@ func BenchmarkHandleProbe(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest("GET", "/probe?target=127.0.0.1&count=1", nil)
 		w := httptest.NewRecorder()
-		handleProbe(w, req, logger)
+		handleProbe(w, req, logger, DetectCapabilities(logger))
 	}
 }
 
@@ -348,7 +349,7 @@ func TestProbeMetricsFormat(t *testing.T) {
 	req := httptest.NewRequest("GET", "/probe?target=127.0.0.1&count=2", nil)
 	w := httptest.NewRecorder()
 
-	handleProbe(w, req, logger)
+	handleProbe(w, req, logger, DetectCapabilities(logger))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)

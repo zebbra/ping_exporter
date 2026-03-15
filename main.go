@@ -45,6 +45,7 @@ var (
 	defaultInterval   = kingpin.Flag("ping.default-interval", "Default interval when not specified.").Default("1s").Duration()
 	defaultPacketSize = kingpin.Flag("ping.default-packet-size", "Default packet size when not specified.").Default("64").Int()
 	defaultTimeout    = kingpin.Flag("ping.default-timeout", "Default timeout when not specified.").Default("5s").Duration()
+	defaultIPProtocol = kingpin.Flag("ping.default-ip-protocol", "Default IP protocol when not specified in probe URL (ip4, ip6, auto). auto resolves literal IPs by family and prefers IPv6 for hostnames.").Default("auto").Enum("ip4", "ip6", "auto")
 	maxCount          = kingpin.Flag("ping.max-count", "Maximum allowed packet count.").Default("100").Int()
 	maxPacketSize     = kingpin.Flag("ping.max-packet-size", "Maximum allowed packet size.").Default("65507").Int()
 	externalURL       = kingpin.Flag("web.external-url", "The URL under which Ping exporter is externally reachable.").String()
@@ -99,8 +100,11 @@ func run() int {
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, os.Interrupt, syscall.SIGTERM)
 
+	// Detect ICMP socket capabilities once at startup
+	caps := DetectCapabilities(promLogger)
+
 	// Setup HTTP handlers
-	setupHandlers(promLogger)
+	setupHandlers(promLogger, caps)
 
 	srv := &http.Server{}
 	srvc := make(chan struct{})
@@ -125,7 +129,7 @@ func run() int {
 	}
 }
 
-func setupHandlers(logger *slog.Logger) {
+func setupHandlers(logger *slog.Logger, caps Capabilities) {
 	// Root redirect
 	if *routePrefix != "/" {
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +152,7 @@ func setupHandlers(logger *slog.Logger) {
 
 	// Probe endpoint
 	http.HandleFunc(path.Join(*routePrefix, "probe"), func(w http.ResponseWriter, r *http.Request) {
-		handleProbe(w, r, logger)
+		handleProbe(w, r, logger, caps)
 	})
 
 	// Root page
@@ -166,7 +170,7 @@ func setupHandlers(logger *slog.Logger) {
 	})
 }
 
-func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger) {
+func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger, caps Capabilities) {
 	params := r.URL.Query()
 
 	// Get target
@@ -207,7 +211,7 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger) {
 
 	ipProtocol := params.Get("ip_protocol")
 	if ipProtocol == "" {
-		ipProtocol = "ip4"
+		ipProtocol = *defaultIPProtocol
 	}
 
 	sourceIP := params.Get("source_ip")
@@ -235,7 +239,7 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger) {
 
 	// Run the ping probe
 	start := time.Now()
-	success := probePing(ctx, target, count, interval, packetSize, ipProtocol, sourceIP, dontFragment, registry, probeLogger)
+	success := probePing(ctx, target, count, interval, packetSize, ipProtocol, sourceIP, dontFragment, caps, registry, probeLogger)
 	duration := time.Since(start).Seconds()
 
 	// Create duration metric

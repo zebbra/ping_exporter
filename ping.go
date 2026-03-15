@@ -24,6 +24,37 @@ var (
 	icmpSequenceMutex sync.Mutex
 )
 
+// Capabilities holds which ICMP socket families are available on this system.
+type Capabilities struct {
+	IPv4 bool
+	IPv6 bool
+}
+
+// DetectCapabilities probes which ICMP socket types can be opened.
+// It tries both unprivileged (udp) and raw (icmp) variants for each family.
+func DetectCapabilities(logger *slog.Logger) Capabilities {
+	caps := Capabilities{}
+
+	if conn, err := icmp.ListenPacket("udp4", "0.0.0.0"); err == nil {
+		conn.Close()
+		caps.IPv4 = true
+	} else if conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0"); err == nil {
+		conn.Close()
+		caps.IPv4 = true
+	}
+
+	if conn, err := icmp.ListenPacket("udp6", "::"); err == nil {
+		conn.Close()
+		caps.IPv6 = true
+	} else if conn, err := icmp.ListenPacket("ip6:ipv6-icmp", "::"); err == nil {
+		conn.Close()
+		caps.IPv6 = true
+	}
+
+	logger.Info("ICMP socket capabilities detected", "ipv4", caps.IPv4, "ipv6", caps.IPv6)
+	return caps
+}
+
 func init() {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	// PID is typically 1 when running in a container; in that case, set
@@ -60,7 +91,7 @@ type PingStats struct {
 	IPVersion       string // "4" for IPv4, "6" for IPv6
 }
 
-func probePing(ctx context.Context, target string, count int, interval time.Duration, packetSize int, ipProtocol, sourceIP string, dontFragment bool, registry *prometheus.Registry, logger *slog.Logger) bool {
+func probePing(ctx context.Context, target string, count int, interval time.Duration, packetSize int, ipProtocol, sourceIP string, dontFragment bool, caps Capabilities, registry *prometheus.Registry, logger *slog.Logger) bool {
 	// Resolve target address
 	var network string
 	switch ipProtocol {
@@ -68,13 +99,11 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 		network = "ip4"
 	case "ip6":
 		network = "ip6"
-	case "auto":
-		network = "ip" // Let Go decide
 	default:
-		network = "ip4"
+		network = "auto"
 	}
 
-	dstAddr, err := resolveTarget(target, network)
+	dstAddr, err := resolveTarget(target, network, caps)
 	if err != nil {
 		logger.Error("Failed to resolve target", "err", err)
 		return false
@@ -97,8 +126,26 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 	return stats.PacketsReceived > 0
 }
 
-func resolveTarget(target, network string) (*net.IPAddr, error) {
-	return net.ResolveIPAddr(network, target)
+func resolveTarget(target, network string, caps Capabilities) (*net.IPAddr, error) {
+	if network != "auto" {
+		return net.ResolveIPAddr(network, target)
+	}
+
+	// Auto mode: detect family for literal IPs directly.
+	if ip := net.ParseIP(target); ip != nil {
+		if ip.To4() != nil {
+			return net.ResolveIPAddr("ip4", target)
+		}
+		return net.ResolveIPAddr("ip6", target)
+	}
+
+	// Hostname: prefer IPv6 if the system can actually use it, else IPv4.
+	if caps.IPv6 {
+		if addr, err := net.ResolveIPAddr("ip6", target); err == nil {
+			return addr, nil
+		}
+	}
+	return net.ResolveIPAddr("ip4", target)
 }
 
 func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, count int, interval time.Duration, packetSize int, dontFragment bool, logger *slog.Logger) (*PingStats, error) {
