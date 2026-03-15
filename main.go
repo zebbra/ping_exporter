@@ -103,6 +103,26 @@ func run() int {
 	// Detect ICMP socket capabilities once at startup
 	caps := DetectCapabilities(promLogger)
 
+	ipv4Socket := "unavailable"
+	if caps.IPv4UDP {
+		ipv4Socket = "udp/unprivileged"
+	} else if caps.IPv4 {
+		ipv4Socket = "raw/CAP_NET_RAW"
+	}
+	ipv6Socket := "unavailable"
+	if caps.IPv6UDP {
+		ipv6Socket = "udp/unprivileged"
+	} else if caps.IPv6 {
+		ipv6Socket = "raw/CAP_NET_RAW"
+	}
+
+	if !caps.IPv4 && !caps.IPv6 {
+		promLogger.Error("No ICMP socket available — cannot ping anything", "ipv4", ipv4Socket, "ipv6", ipv6Socket, "hint", "add CAP_NET_RAW or set net.ipv4.ping_group_range")
+		return 1
+	}
+
+	promLogger.Info("ICMP sockets ready", "ipv4", ipv4Socket, "ipv6", ipv6Socket)
+
 	// Setup HTTP handlers
 	setupHandlers(promLogger, caps)
 

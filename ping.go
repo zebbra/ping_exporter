@@ -24,34 +24,37 @@ var (
 	icmpSequenceMutex sync.Mutex
 )
 
-// Capabilities holds which ICMP socket families are available on this system.
+// Capabilities holds which ICMP socket families and types are available on this system.
 type Capabilities struct {
-	IPv4 bool
-	IPv6 bool
+	IPv4    bool // any IPv4 ICMP socket works
+	IPv6    bool // any IPv6 ICMP socket works
+	IPv4UDP bool // unprivileged udp4 works (no CAP_NET_RAW needed)
+	IPv6UDP bool // unprivileged udp6 works (no CAP_NET_RAW needed)
 }
 
 // DetectCapabilities probes which ICMP socket types can be opened.
-// It tries both unprivileged (udp) and raw (icmp) variants for each family.
+// It tries unprivileged (udp) first, then raw (icmp) for each family.
 func DetectCapabilities(logger *slog.Logger) Capabilities {
 	caps := Capabilities{}
 
-	if conn, err := icmp.ListenPacket("udp4", "0.0.0.0"); err == nil {
+	if conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0"); err == nil {
 		conn.Close()
 		caps.IPv4 = true
-	} else if conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0"); err == nil {
+	} else if conn, err := icmp.ListenPacket("udp4", "0.0.0.0"); err == nil {
 		conn.Close()
 		caps.IPv4 = true
+		caps.IPv4UDP = true
 	}
 
-	if conn, err := icmp.ListenPacket("udp6", "::"); err == nil {
+	if conn, err := icmp.ListenPacket("ip6:ipv6-icmp", "::"); err == nil {
 		conn.Close()
 		caps.IPv6 = true
-	} else if conn, err := icmp.ListenPacket("ip6:ipv6-icmp", "::"); err == nil {
+	} else if conn, err := icmp.ListenPacket("udp6", "::"); err == nil {
 		conn.Close()
 		caps.IPv6 = true
+		caps.IPv6UDP = true
 	}
 
-	logger.Info("ICMP socket capabilities detected", "ipv4", caps.IPv4, "ipv6", caps.IPv6)
 	return caps
 }
 
@@ -112,7 +115,7 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 	logger.Debug("Target resolved", "target", target, "ip", dstAddr.String())
 
 	// Perform ping
-	stats, err := performPing(ctx, dstAddr, sourceIP, count, interval, packetSize, dontFragment, logger)
+	stats, err := performPing(ctx, dstAddr, sourceIP, count, interval, packetSize, dontFragment, caps, logger)
 	if err != nil {
 		logger.Info("Ping failed", "err", err)
 		return false
@@ -148,7 +151,7 @@ func resolveTarget(target, network string, caps Capabilities) (*net.IPAddr, erro
 	return net.ResolveIPAddr("ip4", target)
 }
 
-func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, count int, interval time.Duration, packetSize int, dontFragment bool, logger *slog.Logger) (*PingStats, error) {
+func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, count int, interval time.Duration, packetSize int, dontFragment bool, caps Capabilities, logger *slog.Logger) (*PingStats, error) {
 	stats := &PingStats{
 		RTTs: make([]time.Duration, 0, count),
 	}
@@ -180,16 +183,14 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 		}
 
 		var err error
-		conn, err = icmp.ListenPacket("ip6:ipv6-icmp", srcIP.String())
-		if err != nil {
-			ip6Err := err
-			logger.Debug("Privileged IPv6 ICMP (ip6:ipv6-icmp) unavailable, trying unprivileged (udp6)", "err", ip6Err)
-			// Try unprivileged
+		if caps.IPv6UDP {
 			conn, err = icmp.ListenPacket("udp6", srcIP.String())
-			if err != nil {
-				return nil, fmt.Errorf("failed to create IPv6 ICMP socket: raw ip6:ipv6-icmp failed (%v); unprivileged udp6 also failed (check net.ipv6.conf.all.disable_ipv6): %w", ip6Err, err)
-			}
 			useUDP = true
+		} else {
+			conn, err = icmp.ListenPacket("ip6:ipv6-icmp", srcIP.String())
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to create IPv6 ICMP socket: %w", err)
 		}
 	} else {
 		// IPv4
@@ -214,20 +215,14 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 				return nil, fmt.Errorf("failed to create raw connection: %w", err)
 			}
 		} else {
-			// Try unprivileged first (works better in Docker)
-			conn, err = icmp.ListenPacket("udp4", "0.0.0.0")
-			if err != nil {
-				udp4Err := err
-				logger.Debug("Unprivileged ICMP (udp4) unavailable, trying raw socket (requires NET_RAW/root)", "err", udp4Err)
-				// Try privileged
-				conn, err = icmp.ListenPacket("ip4:icmp", "0.0.0.0")
-				if err != nil {
-					return nil, fmt.Errorf("failed to create IPv4 ICMP socket: unprivileged udp4 failed (%v); raw ip4:icmp also failed (requires CAP_NET_RAW or root): %w", udp4Err, err)
-				}
-				logger.Debug("Using privileged IPv4 ICMP socket")
-			} else {
+			if caps.IPv4UDP {
+				conn, err = icmp.ListenPacket("udp4", "0.0.0.0")
 				useUDP = true
-				logger.Debug("Using unprivileged IPv4 ICMP socket")
+			} else {
+				conn, err = icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+			}
+			if err != nil {
+				return nil, fmt.Errorf("failed to create IPv4 ICMP socket: %w", err)
 			}
 		}
 	}
