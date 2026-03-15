@@ -68,12 +68,14 @@ func TestCalculateStats(t *testing.T) {
 				PacketsSent:     3,
 				PacketsReceived: 0,
 				RTTs:            []time.Duration{},
+				IPVersion:       "4",
 			},
 			expected: &PingStats{
 				PacketsSent:     3,
 				PacketsReceived: 0,
 				PacketLoss:      1.0,
 				RTTs:            []time.Duration{},
+				IPVersion:       "4",
 			},
 		},
 		{
@@ -86,6 +88,7 @@ func TestCalculateStats(t *testing.T) {
 					12 * time.Millisecond,
 					8 * time.Millisecond,
 				},
+				IPVersion: "4",
 			},
 			expected: &PingStats{
 				PacketsSent:     3,
@@ -94,6 +97,7 @@ func TestCalculateStats(t *testing.T) {
 				MinRTT:          8 * time.Millisecond,
 				MaxRTT:          12 * time.Millisecond,
 				AvgRTT:          10 * time.Millisecond,
+				IPVersion:       "4",
 			},
 		},
 		{
@@ -106,6 +110,7 @@ func TestCalculateStats(t *testing.T) {
 					15 * time.Millisecond,
 					5 * time.Millisecond,
 				},
+				IPVersion: "6",
 			},
 			expected: &PingStats{
 				PacketsSent:     5,
@@ -114,6 +119,7 @@ func TestCalculateStats(t *testing.T) {
 				MinRTT:          5 * time.Millisecond,
 				MaxRTT:          15 * time.Millisecond,
 				AvgRTT:          10 * time.Millisecond,
+				IPVersion:       "6",
 			},
 		},
 	}
@@ -153,9 +159,10 @@ func TestRegisterPingMetrics(t *testing.T) {
 			8 * time.Millisecond,
 			15 * time.Millisecond,
 		},
-		MinRTT: 8 * time.Millisecond,
-		MaxRTT: 15 * time.Millisecond,
-		AvgRTT: 11250 * time.Microsecond,
+		MinRTT:    8 * time.Millisecond,
+		MaxRTT:    15 * time.Millisecond,
+		AvgRTT:    11250 * time.Microsecond,
+		IPVersion: "4",
 	}
 
 	registerPingMetrics(registry, stats)
@@ -169,6 +176,7 @@ func TestRegisterPingMetrics(t *testing.T) {
 		"probe_ping_packets_sent":      false,
 		"probe_ping_packets_received":  false,
 		"probe_ping_packet_loss_ratio": false,
+		"probe_ping_ip_version":        false,
 		"probe_ping_rtt_seconds":       false,
 	}
 
@@ -274,6 +282,7 @@ func BenchmarkCalculateStats(b *testing.B) {
 		PacketsSent:     100,
 		PacketsReceived: 95,
 		RTTs:            make([]time.Duration, 95),
+		IPVersion:       "4",
 	}
 
 	// Fill RTTs with sample data
@@ -297,9 +306,10 @@ func BenchmarkRegisterPingMetrics(b *testing.B) {
 			12 * time.Millisecond,
 			8 * time.Millisecond,
 		},
-		MinRTT: 8 * time.Millisecond,
-		MaxRTT: 12 * time.Millisecond,
-		AvgRTT: 10 * time.Millisecond,
+		MinRTT:    8 * time.Millisecond,
+		MaxRTT:    12 * time.Millisecond,
+		AvgRTT:    10 * time.Millisecond,
+		IPVersion: "4",
 	}
 
 	b.ResetTimer()

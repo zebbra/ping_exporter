@@ -85,6 +85,7 @@ All probe metrics are prefixed with `probe_ping_`.
 | `probe_ping_packets_sent` | Number of ICMP packets sent |
 | `probe_ping_packets_received` | Number of ICMP packets received |
 | `probe_ping_packet_loss_ratio` | Packet loss ratio (0.0 to 1.0) |
+| `probe_ping_ip_version` | IP version used for the ping (4 for IPv4, 6 for IPv6) |
 | `probe_ping_rtt_seconds{type="best"}` | Best (minimum) round-trip time in seconds |
 | `probe_ping_rtt_seconds{type="worst"}` | Worst (maximum) round-trip time in seconds |
 | `probe_ping_rtt_seconds{type="mean"}` | Mean round-trip time in seconds |
@@ -116,6 +117,10 @@ probe_ping_packets_received 5
 # HELP probe_ping_packet_loss_ratio Packet loss ratio
 # TYPE probe_ping_packet_loss_ratio gauge
 probe_ping_packet_loss_ratio 0
+
+# HELP probe_ping_ip_version IP version used for the ping (4 for IPv4, 6 for IPv6)
+# TYPE probe_ping_ip_version gauge
+probe_ping_ip_version 4
 
 # HELP probe_ping_rtt_seconds Round-trip time statistics in seconds
 # TYPE probe_ping_rtt_seconds gauge
