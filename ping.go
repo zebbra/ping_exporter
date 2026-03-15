@@ -32,27 +32,68 @@ type Capabilities struct {
 	IPv6UDP bool // unprivileged udp6 works (no CAP_NET_RAW needed)
 }
 
-// DetectCapabilities probes which ICMP socket types can be opened.
-// It tries unprivileged (udp) first, then raw (icmp) for each family.
+// hasRoutableAddress returns true if any up, non-loopback interface has an
+// address of the given family (4 or 6) that is not link-local.
+func hasRoutableAddress(family int) bool {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			if family == 4 && ip.To4() != nil {
+				return true
+			}
+			if family == 6 && ip.To4() == nil && ip.To16() != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// DetectCapabilities probes which ICMP socket types can be opened and whether
+// a routable address exists for each family.
 func DetectCapabilities(logger *slog.Logger) Capabilities {
 	caps := Capabilities{}
 
-	if conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0"); err == nil {
-		conn.Close()
-		caps.IPv4 = true
-	} else if conn, err := icmp.ListenPacket("udp4", "0.0.0.0"); err == nil {
-		conn.Close()
-		caps.IPv4 = true
-		caps.IPv4UDP = true
+	if hasRoutableAddress(4) {
+		if conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0"); err == nil {
+			conn.Close()
+			caps.IPv4 = true
+		} else if conn, err := icmp.ListenPacket("udp4", "0.0.0.0"); err == nil {
+			conn.Close()
+			caps.IPv4 = true
+			caps.IPv4UDP = true
+		}
 	}
 
-	if conn, err := icmp.ListenPacket("ip6:ipv6-icmp", "::"); err == nil {
-		conn.Close()
-		caps.IPv6 = true
-	} else if conn, err := icmp.ListenPacket("udp6", "::"); err == nil {
-		conn.Close()
-		caps.IPv6 = true
-		caps.IPv6UDP = true
+	if hasRoutableAddress(6) {
+		if conn, err := icmp.ListenPacket("ip6:ipv6-icmp", "::"); err == nil {
+			conn.Close()
+			caps.IPv6 = true
+		} else if conn, err := icmp.ListenPacket("udp6", "::"); err == nil {
+			conn.Close()
+			caps.IPv6 = true
+			caps.IPv6UDP = true
+		}
 	}
 
 	return caps

@@ -52,8 +52,37 @@ var (
 	routePrefix       = kingpin.Flag("web.route-prefix", "Prefix for the internal routes of web endpoints.").String()
 )
 
+var (
+	probesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ping_exporter_probes_total",
+		Help: "Total number of probes executed.",
+	}, []string{"result", "ip_version"})
+
+	packetsSentTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ping_exporter_packets_sent_total",
+		Help: "Total ICMP packets sent across all probes.",
+	}, []string{"ip_version"})
+
+	packetsReceivedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ping_exporter_packets_received_total",
+		Help: "Total ICMP packets received across all probes.",
+	}, []string{"ip_version"})
+
+	probeDurationHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "ping_exporter_probe_duration_seconds",
+		Help:    "Histogram of probe durations.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"ip_version"})
+
+	capabilityInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ping_exporter_capability_info",
+		Help: "ICMP socket capabilities detected at startup (1 = active).",
+	}, []string{"ipv4", "ipv6"})
+)
+
 func init() {
 	prometheus.MustRegister(version.NewCollector("ping_exporter"))
+	prometheus.MustRegister(probesTotal, packetsSentTotal, packetsReceivedTotal, probeDurationHistogram, capabilityInfo)
 }
 
 func main() {
@@ -122,6 +151,7 @@ func run() int {
 	}
 
 	promLogger.Info("ICMP sockets ready", "ipv4", ipv4Socket, "ipv6", ipv6Socket)
+	capabilityInfo.WithLabelValues(ipv4Socket, ipv6Socket).Set(1)
 
 	// Setup HTTP handlers
 	setupHandlers(promLogger, caps)
@@ -261,6 +291,41 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger, ca
 	start := time.Now()
 	success := probePing(ctx, target, count, interval, packetSize, ipProtocol, sourceIP, dontFragment, caps, registry, probeLogger)
 	duration := time.Since(start).Seconds()
+
+	// Update exporter-level operational metrics
+	ipVersion := "unknown"
+	sent, received := 0.0, 0.0
+	if mfs, err := registry.Gather(); err == nil {
+		for _, mf := range mfs {
+			switch mf.GetName() {
+			case "probe_ping_ip_version":
+				if len(mf.GetMetric()) > 0 {
+					switch mf.GetMetric()[0].GetGauge().GetValue() {
+					case 4:
+						ipVersion = "4"
+					case 6:
+						ipVersion = "6"
+					}
+				}
+			case "probe_ping_packets_sent":
+				if len(mf.GetMetric()) > 0 {
+					sent = mf.GetMetric()[0].GetGauge().GetValue()
+				}
+			case "probe_ping_packets_received":
+				if len(mf.GetMetric()) > 0 {
+					received = mf.GetMetric()[0].GetGauge().GetValue()
+				}
+			}
+		}
+	}
+	probeDurationHistogram.WithLabelValues(ipVersion).Observe(duration)
+	packetsSentTotal.WithLabelValues(ipVersion).Add(sent)
+	packetsReceivedTotal.WithLabelValues(ipVersion).Add(received)
+	if success {
+		probesTotal.WithLabelValues("success", ipVersion).Inc()
+	} else {
+		probesTotal.WithLabelValues("failure", ipVersion).Inc()
+	}
 
 	// Create duration metric
 	probeDurationGauge := prometheus.NewGauge(prometheus.GaugeOpts{
