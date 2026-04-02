@@ -31,10 +31,9 @@ Then:
     docker run --rm \
       -p 9115:9115 \
       --name ping_exporter \
-      --cap-add=NET_RAW \
       quay.io/zebbra/ping_exporter:latest
 
-**Important**: The `--cap-add=NET_RAW` capability is required for ICMP ping functionality.
+See the [Permissions](#permissions) section for when `--cap-add=NET_RAW` is needed.
 
 ### Checking the results
 
@@ -85,6 +84,7 @@ All probe metrics are prefixed with `probe_ping_`.
 | `probe_ping_packets_sent` | Number of ICMP packets sent |
 | `probe_ping_packets_received` | Number of ICMP packets received |
 | `probe_ping_packet_loss_ratio` | Packet loss ratio (0.0 to 1.0) |
+| `probe_ping_ip_version` | IP version used for the ping (4 for IPv4, 6 for IPv6) |
 | `probe_ping_rtt_seconds{type="best"}` | Best (minimum) round-trip time in seconds |
 | `probe_ping_rtt_seconds{type="worst"}` | Worst (maximum) round-trip time in seconds |
 | `probe_ping_rtt_seconds{type="mean"}` | Mean round-trip time in seconds |
@@ -116,6 +116,10 @@ probe_ping_packets_received 5
 # HELP probe_ping_packet_loss_ratio Packet loss ratio
 # TYPE probe_ping_packet_loss_ratio gauge
 probe_ping_packet_loss_ratio 0
+
+# HELP probe_ping_ip_version IP version used for the ping (4 for IPv4, 6 for IPv6)
+# TYPE probe_ping_ip_version gauge
+probe_ping_ip_version 4
 
 # HELP probe_ping_rtt_seconds Round-trip time statistics in seconds
 # TYPE probe_ping_rtt_seconds gauge
@@ -195,17 +199,30 @@ The ping exporter is configured via URL parameters for ping settings and command
 | `interval` | Time interval between packets | `1s` | `500ms`, `2s` |
 | `packet_size` | Size of the ping packet payload in bytes | `64` | `32`, `1024` |
 | `timeout` | Maximum duration for the entire probe | `5s` | `10s`, `30s` |
-| `ip_protocol` | IP protocol preference: `ip4`, `ip6`, or `auto` | `ip4` | `ip6` |
+| `ip_protocol` | IP protocol: `ip4`, `ip6`, or `auto` (see below) | `auto` | `ip6` |
 | `source_ip` | Source IP address for outgoing packets | *auto* | `192.168.1.100` |
 | `dont_fragment` | Set the Don't Fragment bit in IPv4 header | `false` | `true` |
 | `debug` | Enable debug output | `false` | `true` |
 | `log_level` | Override log level for this probe | *global* | `debug`, `info` |
 
+### IP Protocol / Auto-detection
+
+The `ip_protocol` parameter (and the `--ping.default-ip-protocol` flag) controls how the target is resolved:
+
+| Value | Behaviour |
+|-------|-----------|
+| `auto` *(default)* | Literal IPv4/IPv6 addresses are detected by family. For hostnames, AAAA is tried first (IPv6-first, consistent with RFC 8305 / Happy Eyeballs); falls back to A if no AAAA record exists. |
+| `ip4` | Always resolve as IPv4 (A record). Literal IPv6 addresses will fail. |
+| `ip6` | Always resolve as IPv6 (AAAA record). |
+
 ### Example URLs
 
 ```
-# Basic ping with defaults (3 packets, 1s interval, 64 bytes)
+# Basic ping — auto-detects address family
 http://localhost:9115/probe?target=google.com
+
+# Literal IPv6 address — auto-detected, no ip_protocol needed
+http://localhost:9115/probe?target=2600::
 
 # Custom packet count and interval
 http://localhost:9115/probe?target=8.8.8.8&count=10&interval=500ms
@@ -213,8 +230,11 @@ http://localhost:9115/probe?target=8.8.8.8&count=10&interval=500ms
 # Large packets with longer timeout
 http://localhost:9115/probe?target=prometheus.io&count=5&packet_size=1024&timeout=10s
 
-# IPv6 ping
-http://localhost:9115/probe?target=2001:4860:4860::8888&ip_protocol=ip6
+# Force IPv4 for a dual-stack host
+http://localhost:9115/probe?target=google.com&ip_protocol=ip4
+
+# Force IPv6 for a dual-stack host
+http://localhost:9115/probe?target=google.com&ip_protocol=ip6
 
 # Debug mode with specific source IP
 http://localhost:9115/probe?target=example.com&source_ip=192.168.1.100&debug=true
@@ -232,6 +252,7 @@ http://localhost:9115/probe?target=example.com&source_ip=192.168.1.100&debug=tru
 | `--ping.default-interval` | Default interval when not specified | `1s` |
 | `--ping.default-packet-size` | Default packet size when not specified | `64` |
 | `--ping.default-timeout` | Default timeout when not specified | `5s` |
+| `--ping.default-ip-protocol` | Default IP protocol when not specified in probe URL (`ip4`, `ip6`, `auto`) | `auto` |
 | `--ping.max-count` | Maximum allowed packet count | `100` |
 | `--ping.max-packet-size` | Maximum allowed packet size | `65507` |
 
@@ -321,16 +342,50 @@ scrape_configs:
 
 ## Permissions
 
-The ping exporter requires elevated privileges to send ICMP packets:
+The ping exporter uses two different socket types depending on the environment:
 
-### Linux
-Run as root or grant the `CAP_NET_RAW` capability:
+| Socket | Kernel mechanism | Requires |
+|--------|-----------------|----------|
+| `udp4`/`udp6` (unprivileged) | `SOCK_DGRAM` ICMP — kernel manages ICMP ID | `ping_group_range` includes your GID |
+| `ip4:icmp`/`ip6:ipv6-icmp` (raw) | `SOCK_RAW` ICMP — full packet control | `CAP_NET_RAW` or root |
+
+The exporter tries the unprivileged UDP socket first. If that fails it falls back to the raw socket. Which method was used is visible in the logs at `debug` level.
+
+### Docker
+
+Docker containers inherit the host kernel's `ping_group_range` sysctl, so
+if the host allows unprivileged ping sockets, **no extra capabilities are
+needed** and `udp4`/`udp6` is used automatically.
+
+If the host does not have `ping_group_range` configured (or you want to
+use raw ICMP regardless), add `NET_RAW`:
+
+```yaml
+ping-exporter:
+  image: quay.io/zebbra/ping_exporter:latest
+  cap_add:
+    - NET_RAW
+```
+
+### Bare Linux — Option 1: unprivileged ping socket (recommended)
+
+No capabilities needed. Allow the unprivileged ICMP socket via sysctl:
+
+```bash
+# Allow all users (persist across reboots via /etc/sysctl.conf)
+sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+```
+
+This is the cleanest approach — no binary capabilities required. Many modern
+distros (Ubuntu 20.04+, Debian 11+) already have this set by default.
+
+### Bare Linux — Option 2: `CAP_NET_RAW`
+
+Grant the raw socket capability directly to the binary:
+
 ```bash
 sudo setcap cap_net_raw+ep ./ping_exporter
 ```
-
-### Docker
-Use the `--cap-add=NET_RAW` flag when running the container.
 
 ### Windows
 Run as Administrator.
@@ -346,7 +401,7 @@ Run as root or use `sudo`.
 
 2. **No response from target**: Check if the target host responds to ping from the command line first.
 
-3. **IPv6 connectivity issues**: Ensure your system has proper IPv6 configuration if using `ip6` or `auto` protocols.
+3. **IPv6 connectivity issues**: In `auto` mode the exporter tries AAAA first for hostnames and auto-detects literal IPv6 addresses. If IPv6 is not available on your system, use `--ping.default-ip-protocol=ip4` or pass `ip_protocol=ip4` per probe.
 
 4. **High packet loss**: Consider increasing the timeout or reducing the packet count/interval for unreliable networks.
 

@@ -45,14 +45,44 @@ var (
 	defaultInterval   = kingpin.Flag("ping.default-interval", "Default interval when not specified.").Default("1s").Duration()
 	defaultPacketSize = kingpin.Flag("ping.default-packet-size", "Default packet size when not specified.").Default("64").Int()
 	defaultTimeout    = kingpin.Flag("ping.default-timeout", "Default timeout when not specified.").Default("5s").Duration()
+	defaultIPProtocol = kingpin.Flag("ping.default-ip-protocol", "Default IP protocol when not specified in probe URL (ip4, ip6, auto). auto resolves literal IPs by family and prefers IPv6 for hostnames.").Default("auto").Enum("ip4", "ip6", "auto")
 	maxCount          = kingpin.Flag("ping.max-count", "Maximum allowed packet count.").Default("100").Int()
 	maxPacketSize     = kingpin.Flag("ping.max-packet-size", "Maximum allowed packet size.").Default("65507").Int()
 	externalURL       = kingpin.Flag("web.external-url", "The URL under which Ping exporter is externally reachable.").String()
 	routePrefix       = kingpin.Flag("web.route-prefix", "Prefix for the internal routes of web endpoints.").String()
 )
 
+var (
+	probesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ping_exporter_probes_total",
+		Help: "Total number of probes executed.",
+	}, []string{"result", "ip_version"})
+
+	packetsSentTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ping_exporter_packets_sent_total",
+		Help: "Total ICMP packets sent across all probes.",
+	}, []string{"ip_version"})
+
+	packetsReceivedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ping_exporter_packets_received_total",
+		Help: "Total ICMP packets received across all probes.",
+	}, []string{"ip_version"})
+
+	probeDurationHistogram = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "ping_exporter_probe_duration_seconds",
+		Help:    "Histogram of probe durations.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"ip_version"})
+
+	capabilityInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ping_exporter_capability_info",
+		Help: "ICMP socket capabilities detected at startup (1 = active).",
+	}, []string{"ipv4", "ipv6"})
+)
+
 func init() {
 	prometheus.MustRegister(version.NewCollector("ping_exporter"))
+	prometheus.MustRegister(probesTotal, packetsSentTotal, packetsReceivedTotal, probeDurationHistogram, capabilityInfo)
 }
 
 func main() {
@@ -99,8 +129,32 @@ func run() int {
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, os.Interrupt, syscall.SIGTERM)
 
+	// Detect ICMP socket capabilities once at startup
+	caps := DetectCapabilities(promLogger)
+
+	ipv4Socket := "unavailable"
+	if caps.IPv4UDP {
+		ipv4Socket = "udp/unprivileged"
+	} else if caps.IPv4 {
+		ipv4Socket = "raw/CAP_NET_RAW"
+	}
+	ipv6Socket := "unavailable"
+	if caps.IPv6UDP {
+		ipv6Socket = "udp/unprivileged"
+	} else if caps.IPv6 {
+		ipv6Socket = "raw/CAP_NET_RAW"
+	}
+
+	if !caps.IPv4 && !caps.IPv6 {
+		promLogger.Error("No ICMP socket available — cannot ping anything", "ipv4", ipv4Socket, "ipv6", ipv6Socket, "hint", "add CAP_NET_RAW or set net.ipv4.ping_group_range")
+		return 1
+	}
+
+	promLogger.Info("ICMP sockets ready", "ipv4", ipv4Socket, "ipv6", ipv6Socket)
+	capabilityInfo.WithLabelValues(ipv4Socket, ipv6Socket).Set(1)
+
 	// Setup HTTP handlers
-	setupHandlers(promLogger)
+	setupHandlers(promLogger, caps)
 
 	srv := &http.Server{}
 	srvc := make(chan struct{})
@@ -125,7 +179,7 @@ func run() int {
 	}
 }
 
-func setupHandlers(logger *slog.Logger) {
+func setupHandlers(logger *slog.Logger, caps Capabilities) {
 	// Root redirect
 	if *routePrefix != "/" {
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +202,7 @@ func setupHandlers(logger *slog.Logger) {
 
 	// Probe endpoint
 	http.HandleFunc(path.Join(*routePrefix, "probe"), func(w http.ResponseWriter, r *http.Request) {
-		handleProbe(w, r, logger)
+		handleProbe(w, r, logger, caps)
 	})
 
 	// Root page
@@ -166,7 +220,7 @@ func setupHandlers(logger *slog.Logger) {
 	})
 }
 
-func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger) {
+func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger, caps Capabilities) {
 	params := r.URL.Query()
 
 	// Get target
@@ -207,7 +261,7 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger) {
 
 	ipProtocol := params.Get("ip_protocol")
 	if ipProtocol == "" {
-		ipProtocol = "ip4"
+		ipProtocol = *defaultIPProtocol
 	}
 
 	sourceIP := params.Get("source_ip")
@@ -235,8 +289,43 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger) {
 
 	// Run the ping probe
 	start := time.Now()
-	success := probePing(ctx, target, count, interval, packetSize, ipProtocol, sourceIP, dontFragment, registry, probeLogger)
+	success := probePing(ctx, target, count, interval, packetSize, ipProtocol, sourceIP, dontFragment, caps, registry, probeLogger)
 	duration := time.Since(start).Seconds()
+
+	// Update exporter-level operational metrics
+	ipVersion := "unknown"
+	sent, received := 0.0, 0.0
+	if mfs, err := registry.Gather(); err == nil {
+		for _, mf := range mfs {
+			switch mf.GetName() {
+			case "probe_ping_ip_version":
+				if len(mf.GetMetric()) > 0 {
+					switch mf.GetMetric()[0].GetGauge().GetValue() {
+					case 4:
+						ipVersion = "4"
+					case 6:
+						ipVersion = "6"
+					}
+				}
+			case "probe_ping_packets_sent":
+				if len(mf.GetMetric()) > 0 {
+					sent = mf.GetMetric()[0].GetGauge().GetValue()
+				}
+			case "probe_ping_packets_received":
+				if len(mf.GetMetric()) > 0 {
+					received = mf.GetMetric()[0].GetGauge().GetValue()
+				}
+			}
+		}
+	}
+	probeDurationHistogram.WithLabelValues(ipVersion).Observe(duration)
+	packetsSentTotal.WithLabelValues(ipVersion).Add(sent)
+	packetsReceivedTotal.WithLabelValues(ipVersion).Add(received)
+	if success {
+		probesTotal.WithLabelValues("success", ipVersion).Inc()
+	} else {
+		probesTotal.WithLabelValues("failure", ipVersion).Inc()
+	}
 
 	// Create duration metric
 	probeDurationGauge := prometheus.NewGauge(prometheus.GaugeOpts{

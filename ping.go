@@ -24,6 +24,81 @@ var (
 	icmpSequenceMutex sync.Mutex
 )
 
+// Capabilities holds which ICMP socket families and types are available on this system.
+type Capabilities struct {
+	IPv4    bool // any IPv4 ICMP socket works
+	IPv6    bool // any IPv6 ICMP socket works
+	IPv4UDP bool // unprivileged udp4 works (no CAP_NET_RAW needed)
+	IPv6UDP bool // unprivileged udp6 works (no CAP_NET_RAW needed)
+}
+
+// hasRoutableAddress returns true if any up, non-loopback interface has an
+// address of the given family (4 or 6) that is not link-local.
+func hasRoutableAddress(family int) bool {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			if family == 4 && ip.To4() != nil {
+				return true
+			}
+			if family == 6 && ip.To4() == nil && ip.To16() != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// DetectCapabilities probes which ICMP socket types can be opened and whether
+// a routable address exists for each family.
+func DetectCapabilities(logger *slog.Logger) Capabilities {
+	caps := Capabilities{}
+
+	if hasRoutableAddress(4) {
+		if conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0"); err == nil {
+			conn.Close()
+			caps.IPv4 = true
+		} else if conn, err := icmp.ListenPacket("udp4", "0.0.0.0"); err == nil {
+			conn.Close()
+			caps.IPv4 = true
+			caps.IPv4UDP = true
+		}
+	}
+
+	if hasRoutableAddress(6) {
+		if conn, err := icmp.ListenPacket("ip6:ipv6-icmp", "::"); err == nil {
+			conn.Close()
+			caps.IPv6 = true
+		} else if conn, err := icmp.ListenPacket("udp6", "::"); err == nil {
+			conn.Close()
+			caps.IPv6 = true
+			caps.IPv6UDP = true
+		}
+	}
+
+	return caps
+}
+
 func init() {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	// PID is typically 1 when running in a container; in that case, set
@@ -57,9 +132,10 @@ type PingStats struct {
 	MaxRTT          time.Duration
 	AvgRTT          time.Duration
 	StdDevRTT       time.Duration
+	IPVersion       string // "4" for IPv4, "6" for IPv6
 }
 
-func probePing(ctx context.Context, target string, count int, interval time.Duration, packetSize int, ipProtocol, sourceIP string, dontFragment bool, registry *prometheus.Registry, logger *slog.Logger) bool {
+func probePing(ctx context.Context, target string, count int, interval time.Duration, packetSize int, ipProtocol, sourceIP string, dontFragment bool, caps Capabilities, registry *prometheus.Registry, logger *slog.Logger) bool {
 	// Resolve target address
 	var network string
 	switch ipProtocol {
@@ -67,26 +143,26 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 		network = "ip4"
 	case "ip6":
 		network = "ip6"
-	case "auto":
-		network = "ip" // Let Go decide
 	default:
-		network = "ip4"
+		network = "auto"
 	}
 
-	dstAddr, err := resolveTarget(target, network)
+	dstAddr, err := resolveTarget(target, network, caps)
 	if err != nil {
 		logger.Error("Failed to resolve target", "err", err)
 		return false
 	}
 
-	logger.Info("Target resolved", "target", target, "ip", dstAddr.String())
+	logger.Debug("Target resolved", "target", target, "ip", dstAddr.String())
 
 	// Perform ping
-	stats, err := performPing(ctx, dstAddr, sourceIP, count, interval, packetSize, dontFragment, logger)
+	stats, err := performPing(ctx, dstAddr, sourceIP, count, interval, packetSize, dontFragment, caps, logger)
 	if err != nil {
-		logger.Error("Ping failed", "err", err)
+		logger.Info("Ping failed", "err", err)
 		return false
 	}
+
+	logger.Info("Ping complete", "target", target, "sent", stats.PacketsSent, "received", stats.PacketsReceived, "loss", stats.PacketLoss, "avg_rtt", stats.AvgRTT)
 
 	// Register metrics
 	registerPingMetrics(registry, stats)
@@ -94,11 +170,29 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 	return stats.PacketsReceived > 0
 }
 
-func resolveTarget(target, network string) (*net.IPAddr, error) {
-	return net.ResolveIPAddr(network, target)
+func resolveTarget(target, network string, caps Capabilities) (*net.IPAddr, error) {
+	if network != "auto" {
+		return net.ResolveIPAddr(network, target)
+	}
+
+	// Auto mode: detect family for literal IPs directly.
+	if ip := net.ParseIP(target); ip != nil {
+		if ip.To4() != nil {
+			return net.ResolveIPAddr("ip4", target)
+		}
+		return net.ResolveIPAddr("ip6", target)
+	}
+
+	// Hostname: prefer IPv6 if the system can actually use it, else IPv4.
+	if caps.IPv6 {
+		if addr, err := net.ResolveIPAddr("ip6", target); err == nil {
+			return addr, nil
+		}
+	}
+	return net.ResolveIPAddr("ip4", target)
 }
 
-func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, count int, interval time.Duration, packetSize int, dontFragment bool, logger *slog.Logger) (*PingStats, error) {
+func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, count int, interval time.Duration, packetSize int, dontFragment bool, caps Capabilities, logger *slog.Logger) (*PingStats, error) {
 	stats := &PingStats{
 		RTTs: make([]time.Duration, 0, count),
 	}
@@ -108,6 +202,7 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 		replyType   icmp.Type
 		conn        *icmp.PacketConn
 		v4RawConn   *ipv4.RawConn
+		useUDP      bool
 	)
 
 	// Determine ICMP types and create connection
@@ -121,6 +216,7 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 
 	if dstAddr.IP.To4() == nil {
 		// IPv6
+		stats.IPVersion = "6"
 		requestType = ipv6.ICMPTypeEchoRequest
 		replyType = ipv6.ICMPTypeEchoReply
 		if srcIP == nil {
@@ -128,16 +224,18 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 		}
 
 		var err error
-		conn, err = icmp.ListenPacket("ip6:ipv6-icmp", srcIP.String())
-		if err != nil {
-			// Try unprivileged
+		if caps.IPv6UDP {
 			conn, err = icmp.ListenPacket("udp6", srcIP.String())
-			if err != nil {
-				return nil, fmt.Errorf("failed to create IPv6 ICMP socket: %w", err)
-			}
+			useUDP = true
+		} else {
+			conn, err = icmp.ListenPacket("ip6:ipv6-icmp", srcIP.String())
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to create IPv6 ICMP socket: %w", err)
 		}
 	} else {
 		// IPv4
+		stats.IPVersion = "4"
 		requestType = ipv4.ICMPTypeEcho
 		replyType = ipv4.ICMPTypeEchoReply
 		if srcIP == nil {
@@ -158,18 +256,14 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 				return nil, fmt.Errorf("failed to create raw connection: %w", err)
 			}
 		} else {
-			// Try unprivileged first (works better in Docker)
-			conn, err = icmp.ListenPacket("udp4", "0.0.0.0")
-			if err != nil {
-				logger.Debug("Failed to create unprivileged IPv4 ICMP socket, trying privileged", "err", err)
-				// Try privileged
-				conn, err = icmp.ListenPacket("ip4:icmp", "0.0.0.0")
-				if err != nil {
-					return nil, fmt.Errorf("failed to create IPv4 ICMP socket: %w", err)
-				}
-				logger.Info("Using privileged IPv4 ICMP socket")
+			if caps.IPv4UDP {
+				conn, err = icmp.ListenPacket("udp4", "0.0.0.0")
+				useUDP = true
 			} else {
-				logger.Info("Using unprivileged IPv4 ICMP socket")
+				conn, err = icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+			}
+			if err != nil {
+				return nil, fmt.Errorf("failed to create IPv4 ICMP socket: %w", err)
 			}
 		}
 	}
@@ -193,19 +287,19 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 		stats.PacketsSent++
 		seq := getICMPSequence()
 
-		logger.Info("Sending ping packet", "seq", seq, "packet", i+1, "of", count)
+		logger.Debug("Sending ping packet", "seq", seq, "packet", i+1, "of", count)
 
 		// Create a timeout context for this individual ping
 		pingCtx, cancel := context.WithTimeout(ctx, time.Second*2)
-		rtt, err := sendPing(pingCtx, conn, v4RawConn, dstAddr, srcIP, requestType, replyType, seq, payload, dontFragment, logger)
+		rtt, err := sendPing(pingCtx, conn, v4RawConn, dstAddr, srcIP, requestType, replyType, seq, payload, useUDP, logger)
 		cancel()
 
 		if err != nil {
-			logger.Error("Ping failed", "seq", seq, "err", err)
+			logger.Debug("Ping failed", "seq", seq, "err", err)
 		} else {
 			stats.PacketsReceived++
 			stats.RTTs = append(stats.RTTs, rtt)
-			logger.Info("Ping successful", "seq", seq, "rtt", rtt)
+			logger.Debug("Ping successful", "seq", seq, "rtt", rtt)
 		}
 
 		// Wait for interval (except for last packet)
@@ -224,7 +318,7 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 	return stats, nil
 }
 
-func sendPing(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.RawConn, dstAddr *net.IPAddr, srcIP net.IP, requestType, replyType icmp.Type, seq uint16, payload []byte, dontFragment bool, logger *slog.Logger) (time.Duration, error) {
+func sendPing(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.RawConn, dstAddr *net.IPAddr, srcIP net.IP, requestType, replyType icmp.Type, seq uint16, payload []byte, useUDP bool, logger *slog.Logger) (time.Duration, error) {
 	// Create ICMP message
 	body := &icmp.Echo{
 		ID:   icmpID,
@@ -248,9 +342,8 @@ func sendPing(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.RawCon
 	logger.Debug("ICMP packet marshaled", "size", len(wb))
 
 	var dst net.Addr = dstAddr
-	privileged := conn == nil
 
-	if !privileged {
+	if useUDP {
 		dst = &net.UDPAddr{IP: dstAddr.IP, Zone: dstAddr.Zone}
 	}
 
@@ -281,10 +374,10 @@ func sendPing(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.RawCon
 	logger.Debug("ICMP packet sent", "dst", dst.String())
 
 	// Wait for reply
-	return waitForReply(ctx, conn, v4RawConn, dst, replyType, body.ID, body.Seq, wb, privileged, start, logger)
+	return waitForReply(ctx, conn, v4RawConn, dst, replyType, body.ID, body.Seq, wb, useUDP, start, logger)
 }
 
-func waitForReply(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.RawConn, dst net.Addr, replyType icmp.Type, expectedID, expectedSeq int, expectedData []byte, privileged bool, sendTime time.Time, logger *slog.Logger) (time.Duration, error) {
+func waitForReply(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.RawConn, dst net.Addr, replyType icmp.Type, expectedID, expectedSeq int, expectedData []byte, useUDP bool, sendTime time.Time, logger *slog.Logger) (time.Duration, error) {
 	var dstAddr *net.IPAddr
 	if ipAddr, ok := dst.(*net.IPAddr); ok {
 		dstAddr = ipAddr
@@ -374,7 +467,7 @@ func waitForReply(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.Ra
 		logger.Debug("Received ICMP Echo", "id", body.ID, "seq", body.Seq, "expected_id", expectedID, "expected_seq", expectedSeq)
 
 		// Check if this is our packet
-		if (!privileged && runtime.GOOS == "linux") || body.ID == expectedID {
+		if (useUDP && runtime.GOOS == "linux") || body.ID == expectedID {
 			if body.Seq == expectedSeq {
 				// Calculate RTT properly
 				rtt := receiveTime.Sub(sendTime)
@@ -453,6 +546,18 @@ func registerPingMetrics(registry *prometheus.Registry, stats *PingStats) {
 	})
 	packetLoss.Set(stats.PacketLoss)
 	registry.MustRegister(packetLoss)
+
+	// IP version used
+	ipVersion := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "probe_ping_ip_version",
+		Help: "IP version used for the ping (4 for IPv4, 6 for IPv6)",
+	})
+	if stats.IPVersion == "4" {
+		ipVersion.Set(4)
+	} else if stats.IPVersion == "6" {
+		ipVersion.Set(6)
+	}
+	registry.MustRegister(ipVersion)
 
 	// RTT statistics
 	if len(stats.RTTs) > 0 {

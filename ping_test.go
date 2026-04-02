@@ -44,7 +44,7 @@ func TestResolveTarget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			addr, err := resolveTarget(tt.target, tt.network)
+			addr, err := resolveTarget(tt.target, tt.network, Capabilities{IPv4: true, IPv6: true})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("resolveTarget() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -68,12 +68,14 @@ func TestCalculateStats(t *testing.T) {
 				PacketsSent:     3,
 				PacketsReceived: 0,
 				RTTs:            []time.Duration{},
+				IPVersion:       "4",
 			},
 			expected: &PingStats{
 				PacketsSent:     3,
 				PacketsReceived: 0,
 				PacketLoss:      1.0,
 				RTTs:            []time.Duration{},
+				IPVersion:       "4",
 			},
 		},
 		{
@@ -86,6 +88,7 @@ func TestCalculateStats(t *testing.T) {
 					12 * time.Millisecond,
 					8 * time.Millisecond,
 				},
+				IPVersion: "4",
 			},
 			expected: &PingStats{
 				PacketsSent:     3,
@@ -94,6 +97,7 @@ func TestCalculateStats(t *testing.T) {
 				MinRTT:          8 * time.Millisecond,
 				MaxRTT:          12 * time.Millisecond,
 				AvgRTT:          10 * time.Millisecond,
+				IPVersion:       "4",
 			},
 		},
 		{
@@ -106,6 +110,7 @@ func TestCalculateStats(t *testing.T) {
 					15 * time.Millisecond,
 					5 * time.Millisecond,
 				},
+				IPVersion: "6",
 			},
 			expected: &PingStats{
 				PacketsSent:     5,
@@ -114,6 +119,7 @@ func TestCalculateStats(t *testing.T) {
 				MinRTT:          5 * time.Millisecond,
 				MaxRTT:          15 * time.Millisecond,
 				AvgRTT:          10 * time.Millisecond,
+				IPVersion:       "6",
 			},
 		},
 	}
@@ -153,9 +159,10 @@ func TestRegisterPingMetrics(t *testing.T) {
 			8 * time.Millisecond,
 			15 * time.Millisecond,
 		},
-		MinRTT: 8 * time.Millisecond,
-		MaxRTT: 15 * time.Millisecond,
-		AvgRTT: 11250 * time.Microsecond,
+		MinRTT:    8 * time.Millisecond,
+		MaxRTT:    15 * time.Millisecond,
+		AvgRTT:    11250 * time.Microsecond,
+		IPVersion: "4",
 	}
 
 	registerPingMetrics(registry, stats)
@@ -169,6 +176,7 @@ func TestRegisterPingMetrics(t *testing.T) {
 		"probe_ping_packets_sent":      false,
 		"probe_ping_packets_received":  false,
 		"probe_ping_packet_loss_ratio": false,
+		"probe_ping_ip_version":        false,
 		"probe_ping_rtt_seconds":       false,
 	}
 
@@ -194,7 +202,7 @@ func TestProbePingTimeout(t *testing.T) {
 	defer cancel()
 
 	// Use an unreachable IP to ensure timeout
-	success := probePing(ctx, "192.0.2.1", 1, 100*time.Millisecond, 64, "ip4", "", false, registry, logger)
+	success := probePing(ctx, "192.0.2.1", 1, 100*time.Millisecond, 64, "ip4", "", false, Capabilities{IPv4: true, IPv6: true}, registry, logger)
 
 	if success {
 		t.Error("Expected ping to fail due to timeout, but it succeeded")
@@ -208,7 +216,7 @@ func TestProbePingLocalhost(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	success := probePing(ctx, "127.0.0.1", 1, 100*time.Millisecond, 64, "ip4", "", false, registry, logger)
+	success := probePing(ctx, "127.0.0.1", 1, 100*time.Millisecond, 64, "ip4", "", false, Capabilities{IPv4: true, IPv6: true}, registry, logger)
 
 	// Note: This test may fail in some environments where ICMP is blocked
 	// In those cases, the test should still complete without error
@@ -234,7 +242,7 @@ func TestProbePingInvalidTarget(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	success := probePing(ctx, "invalid.nonexistent.domain.test", 1, 100*time.Millisecond, 64, "ip4", "", false, registry, logger)
+	success := probePing(ctx, "invalid.nonexistent.domain.test", 1, 100*time.Millisecond, 64, "ip4", "", false, Capabilities{IPv4: true, IPv6: true}, registry, logger)
 
 	if success {
 		t.Error("Expected ping to fail for invalid target, but it succeeded")
@@ -274,6 +282,7 @@ func BenchmarkCalculateStats(b *testing.B) {
 		PacketsSent:     100,
 		PacketsReceived: 95,
 		RTTs:            make([]time.Duration, 95),
+		IPVersion:       "4",
 	}
 
 	// Fill RTTs with sample data
@@ -297,9 +306,10 @@ func BenchmarkRegisterPingMetrics(b *testing.B) {
 			12 * time.Millisecond,
 			8 * time.Millisecond,
 		},
-		MinRTT: 8 * time.Millisecond,
-		MaxRTT: 12 * time.Millisecond,
-		AvgRTT: 10 * time.Millisecond,
+		MinRTT:    8 * time.Millisecond,
+		MaxRTT:    12 * time.Millisecond,
+		AvgRTT:    10 * time.Millisecond,
+		IPVersion: "4",
 	}
 
 	b.ResetTimer()
