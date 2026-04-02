@@ -27,8 +27,6 @@ import (
 	"time"
 
 	"github.com/alecthomas/kingpin/v2"
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors/version"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -98,18 +96,15 @@ func run() int {
 	kingpin.Parse()
 
 	promLogger := promslog.New(promslogConfig)
-	logger := log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
-	logger = log.With(logger, "ts", log.DefaultTimestampUTC)
-	logger = log.With(logger, "caller", log.DefaultCaller)
 
-	level.Info(logger).Log("msg", "Starting ping_exporter", "version", commonversion.Info())
-	level.Info(logger).Log("msg", commonversion.BuildContext())
+	promLogger.Info("Starting ping_exporter", "version", commonversion.Info())
+	promLogger.Info(commonversion.BuildContext())
 
 	// Infer external URL if not provided
 	if *externalURL == "" {
 		hostname, err := os.Hostname()
 		if err != nil {
-			level.Error(logger).Log("msg", "Failed to get hostname", "err", err)
+			promLogger.Error("Failed to get hostname", "err", err)
 			return 1
 		}
 		listenAddr := (*toolkitFlags.WebListenAddresses)[0]
@@ -160,18 +155,18 @@ func run() int {
 	srvc := make(chan struct{})
 
 	go func() {
-		if err := web.ListenAndServe(srv, toolkitFlags, logger); err != nil {
-			level.Error(logger).Log("msg", "Error starting HTTP server", "err", err)
+		if err := web.ListenAndServe(srv, toolkitFlags, promLogger); err != nil {
+			promLogger.Error("Error starting HTTP server", "err", err)
 			close(srvc)
 		}
 	}()
 
-	level.Info(logger).Log("msg", "Ping exporter started", "address", (*toolkitFlags.WebListenAddresses)[0])
+	promLogger.Info("Ping exporter started", "address", (*toolkitFlags.WebListenAddresses)[0])
 
 	for {
 		select {
 		case <-term:
-			level.Info(logger).Log("msg", "Received SIGTERM, exiting gracefully...")
+			promLogger.Info("Received SIGTERM, exiting gracefully...")
 			return 0
 		case <-srvc:
 			return 1

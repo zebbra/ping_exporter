@@ -158,11 +158,11 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 	// Perform ping
 	stats, err := performPing(ctx, dstAddr, sourceIP, count, interval, packetSize, dontFragment, caps, logger)
 	if err != nil {
-		logger.Info("Ping failed", "err", err)
+		logger.Debug("Ping failed", "err", err)
 		return false
 	}
 
-	logger.Info("Ping complete", "target", target, "sent", stats.PacketsSent, "received", stats.PacketsReceived, "loss", stats.PacketLoss, "avg_rtt", stats.AvgRTT)
+	logger.Debug("Ping complete", "target", target, "sent", stats.PacketsSent, "received", stats.PacketsReceived, "loss", stats.PacketLoss, "avg_rtt", stats.AvgRTT)
 
 	// Register metrics
 	registerPingMetrics(registry, stats)
