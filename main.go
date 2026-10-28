@@ -283,9 +283,12 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger, ca
 
 	// Set log level for this probe if specified
 	if logLevelStr := params.Get("log_level"); logLevelStr != "" {
-		// This would ideally create a new logger with the specified level
-		// For now, we'll just log the requested level
-		probeLogger = probeLogger.With("probe_log_level", logLevelStr)
+		var lvl slog.Level
+		if err := lvl.UnmarshalText([]byte(logLevelStr)); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid log_level %q", logLevelStr), http.StatusBadRequest)
+			return
+		}
+		probeLogger = slog.New(&levelHandler{level: lvl, handler: probeLogger.Handler()})
 	}
 
 	probeLogger.Info("Beginning probe")
@@ -400,4 +403,28 @@ func capToScrapeTimeout(r *http.Request, timeout, offset time.Duration) time.Dur
 		return scrapeTimeout
 	}
 	return timeout
+}
+
+// levelHandler overrides the minimum level of the wrapped handler, in both
+// directions. This works because slog handlers only check the level in
+// Enabled, never in Handle.
+type levelHandler struct {
+	level   slog.Leveler
+	handler slog.Handler
+}
+
+func (h *levelHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= h.level.Level()
+}
+
+func (h *levelHandler) Handle(ctx context.Context, r slog.Record) error {
+	return h.handler.Handle(ctx, r)
+}
+
+func (h *levelHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &levelHandler{level: h.level, handler: h.handler.WithAttrs(attrs)}
+}
+
+func (h *levelHandler) WithGroup(name string) slog.Handler {
+	return &levelHandler{level: h.level, handler: h.handler.WithGroup(name)}
 }

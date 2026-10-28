@@ -67,7 +67,7 @@ For example:
 
 This will run the probe with debug logging enabled, which can be useful for troubleshooting probe issues without affecting the global log level of the exporter.
 
-Valid log levels are: `debug`, `info`, `warn`, `error`.
+Valid log levels are: `debug`, `info`, `warn`, `error`. Other values are rejected with `400 Bad Request`.
 
 If the log level is not specified, the global log level will be used.
 

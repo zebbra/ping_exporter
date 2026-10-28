@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -423,5 +425,48 @@ func TestCapToScrapeTimeout(t *testing.T) {
 				t.Errorf("Expected %v, got %v", tt.expected, got)
 			}
 		})
+	}
+}
+
+func TestProbeLogLevel(t *testing.T) {
+	*defaultCount = 1
+	*defaultInterval = time.Second
+	*defaultTimeout = 2 * time.Second
+	*maxCount = 100
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	// Unresolvable target, so the probe only logs and sends no packets
+	caps := Capabilities{IPv4: true}
+
+	req := httptest.NewRequest("GET", "/probe?target=invalid.test&log_level=error", nil)
+	handleProbe(httptest.NewRecorder(), req, logger, caps)
+	if strings.Contains(buf.String(), "level=INFO") {
+		t.Errorf("Expected no INFO logs with log_level=error, got:\n%s", buf.String())
+	}
+
+	buf.Reset()
+	req = httptest.NewRequest("GET", "/probe?target=invalid.test&log_level=debug", nil)
+	handleProbe(httptest.NewRecorder(), req, logger, caps)
+	if !strings.Contains(buf.String(), "level=INFO") {
+		t.Errorf("Expected INFO logs with log_level=debug, got:\n%s", buf.String())
+	}
+
+	w := httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/probe?target=invalid.test&log_level=verbose", nil)
+	handleProbe(w, req, logger, caps)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 for invalid log_level, got %d", w.Code)
+	}
+}
+
+func TestLevelHandlerLowersLevel(t *testing.T) {
+	var buf bytes.Buffer
+	base := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(&levelHandler{level: slog.LevelDebug, handler: base.Handler()}).With("k", "v")
+
+	logger.Debug("hello")
+	if !strings.Contains(buf.String(), "level=DEBUG msg=hello k=v") {
+		t.Errorf("Expected debug record with attrs, got: %q", buf.String())
 	}
 }
