@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -367,5 +368,83 @@ func TestPingStatsEdgeCases(t *testing.T) {
 				t.Errorf("Failed to gather metrics: %v", err)
 			}
 		})
+	}
+}
+
+func TestPerPacketTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 5s - 2*1s for intervals, split across 3 packets
+	got := perPacketTimeout(ctx, 3, time.Second)
+	if got < 900*time.Millisecond || got > time.Second {
+		t.Errorf("Expected ~1s per packet, got %v", got)
+	}
+
+	if got := perPacketTimeout(ctx, 10, time.Second); got != 0 {
+		t.Errorf("Expected 0 when intervals exceed the budget, got %v", got)
+	}
+
+	if got := perPacketTimeout(context.Background(), 3, time.Second); got != defaultPerPacketTimeout {
+		t.Errorf("Expected default timeout without deadline, got %v", got)
+	}
+}
+
+func TestProbePingDeadlineKeepsMetrics(t *testing.T) {
+	logger := promslog.New(&promslog.Config{})
+	caps := DetectCapabilities(logger)
+	if !caps.IPv4 {
+		t.Skip("No IPv4 ICMP socket available")
+	}
+
+	registry := prometheus.NewRegistry()
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	// TEST-NET-1 never answers, so every packet runs into its reply timeout
+	probePing(ctx, "192.0.2.1", 3, 10*time.Millisecond, 64, "ip4", "", false, caps, registry, logger)
+
+	mfs, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("Failed to gather metrics: %v", err)
+	}
+	found := map[string]float64{}
+	for _, mf := range mfs {
+		found[mf.GetName()] = mf.GetMetric()[0].GetGauge().GetValue()
+	}
+	if found["probe_ping_packets_sent"] != 3 {
+		t.Errorf("Expected 3 packets sent, got %v", found["probe_ping_packets_sent"])
+	}
+	if found["probe_ping_packet_loss_ratio"] != 1 {
+		t.Errorf("Expected packet loss ratio 1, got %v", found["probe_ping_packet_loss_ratio"])
+	}
+}
+
+func TestPerformPingSourceIP(t *testing.T) {
+	logger := promslog.New(&promslog.Config{})
+	caps := DetectCapabilities(logger)
+	if !caps.IPv4 {
+		t.Skip("No IPv4 ICMP socket available")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	dst := &net.IPAddr{IP: net.ParseIP("127.0.0.1")}
+
+	// 192.0.2.1 is not a local address, binding to it must fail
+	if _, err := performPing(ctx, dst, "192.0.2.1", 1, time.Millisecond, 64, false, caps, logger); err == nil {
+		t.Error("Expected error when binding to a non-local source IP")
+	}
+
+	if _, err := performPing(ctx, dst, "::1", 1, time.Millisecond, 64, false, caps, logger); err == nil {
+		t.Error("Expected error for source IP with mismatching address family")
+	}
+
+	stats, err := performPing(ctx, dst, "127.0.0.1", 1, time.Millisecond, 64, false, caps, logger)
+	if err != nil {
+		t.Fatalf("Expected ping from 127.0.0.1 to succeed: %v", err)
+	}
+	if stats.PacketsReceived != 1 {
+		t.Errorf("Expected 1 packet received, got %d", stats.PacketsReceived)
 	}
 }

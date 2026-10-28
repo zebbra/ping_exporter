@@ -45,6 +45,7 @@ var (
 	defaultInterval   = kingpin.Flag("ping.default-interval", "Default interval when not specified.").Default("1s").Duration()
 	defaultPacketSize = kingpin.Flag("ping.default-packet-size", "Default packet size when not specified.").Default("64").Int()
 	defaultTimeout    = kingpin.Flag("ping.default-timeout", "Default timeout when not specified.").Default("5s").Duration()
+	timeoutOffset     = kingpin.Flag("ping.timeout-offset", "Offset to subtract from the Prometheus scrape timeout.").Default("0.5s").Duration()
 	defaultIPProtocol = kingpin.Flag("ping.default-ip-protocol", "Default IP protocol when not specified in probe URL (ip4, ip6, auto). auto resolves literal IPs by family and prefers IPv6 for hostnames.").Default("auto").Enum("ip4", "ip6", "auto")
 	maxCount          = kingpin.Flag("ping.max-count", "Maximum allowed packet count.").Default("100").Int()
 	maxPacketSize     = kingpin.Flag("ping.max-packet-size", "Maximum allowed packet size.").Default("65507").Int()
@@ -259,6 +260,15 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger, ca
 		}
 	}
 
+	timeout = capToScrapeTimeout(r, timeout, *timeoutOffset)
+
+	// Every packet needs some time to wait for its reply on top of the
+	// intervals between packets.
+	if minDuration := time.Duration(count-1) * interval; minDuration >= timeout {
+		http.Error(w, fmt.Sprintf("Probe timeout %s is too short for %d packets at %s interval", timeout, count, interval), http.StatusBadRequest)
+		return
+	}
+
 	ipProtocol := params.Get("ip_protocol")
 	if ipProtocol == "" {
 		ipProtocol = *defaultIPProtocol
@@ -273,9 +283,12 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger, ca
 
 	// Set log level for this probe if specified
 	if logLevelStr := params.Get("log_level"); logLevelStr != "" {
-		// This would ideally create a new logger with the specified level
-		// For now, we'll just log the requested level
-		probeLogger = probeLogger.With("probe_log_level", logLevelStr)
+		var lvl slog.Level
+		if err := lvl.UnmarshalText([]byte(logLevelStr)); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid log_level %q", logLevelStr), http.StatusBadRequest)
+			return
+		}
+		probeLogger = slog.New(&levelHandler{level: lvl, handler: probeLogger.Handler()})
 	}
 
 	probeLogger.Info("Beginning probe")
@@ -363,8 +376,9 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger, ca
 		debugOutput += "\n\nMetrics that would have been returned:\n"
 		w.Write([]byte(debugOutput))
 
-		// Also write the metrics
-		h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
+		// Also write the metrics. The headers are already sent at this point,
+		// so the handler must not switch to gzip.
+		h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{DisableCompression: true})
 		h.ServeHTTP(w, r)
 		return
 	}
@@ -372,4 +386,46 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger, ca
 	// Return Prometheus metrics
 	h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	h.ServeHTTP(w, r)
+}
+
+// capToScrapeTimeout lowers timeout so the probe finishes within the scrape
+// timeout announced by Prometheus, minus offset to leave room for the response.
+func capToScrapeTimeout(r *http.Request, timeout, offset time.Duration) time.Duration {
+	v := r.Header.Get("X-Prometheus-Scrape-Timeout-Seconds")
+	if v == "" {
+		return timeout
+	}
+	seconds, err := strconv.ParseFloat(v, 64)
+	if err != nil || seconds <= 0 {
+		return timeout
+	}
+	scrapeTimeout := time.Duration(seconds*float64(time.Second)) - offset
+	if scrapeTimeout > 0 && scrapeTimeout < timeout {
+		return scrapeTimeout
+	}
+	return timeout
+}
+
+// levelHandler overrides the minimum level of the wrapped handler, in both
+// directions. This works because slog handlers only check the level in
+// Enabled, never in Handle.
+type levelHandler struct {
+	level   slog.Leveler
+	handler slog.Handler
+}
+
+func (h *levelHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= h.level.Level()
+}
+
+func (h *levelHandler) Handle(ctx context.Context, r slog.Record) error {
+	return h.handler.Handle(ctx, r)
+}
+
+func (h *levelHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &levelHandler{level: h.level, handler: h.handler.WithAttrs(attrs)}
+}
+
+func (h *levelHandler) WithGroup(name string) slog.Handler {
+	return &levelHandler{level: h.level, handler: h.handler.WithGroup(name)}
 }

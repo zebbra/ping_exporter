@@ -67,7 +67,7 @@ For example:
 
 This will run the probe with debug logging enabled, which can be useful for troubleshooting probe issues without affecting the global log level of the exporter.
 
-Valid log levels are: `debug`, `info`, `warn`, `error`.
+Valid log levels are: `debug`, `info`, `warn`, `error`. Other values are rejected with `400 Bad Request`.
 
 If the log level is not specified, the global log level will be used.
 
@@ -201,9 +201,19 @@ The ping exporter is configured via URL parameters for ping settings and command
 | `timeout` | Maximum duration for the entire probe | `5s` | `10s`, `30s` |
 | `ip_protocol` | IP protocol: `ip4`, `ip6`, or `auto` (see below) | `auto` | `ip6` |
 | `source_ip` | Source IP address for outgoing packets | *auto* | `192.168.1.100` |
-| `dont_fragment` | Set the Don't Fragment bit in IPv4 header | `false` | `true` |
+| `dont_fragment` | Never fragment outgoing packets (IPv4 DF bit, IPv6 `IPV6_DONTFRAG`); oversized packets count as lost. Linux only | `false` | `true` |
 | `debug` | Enable debug output | `false` | `true` |
 | `log_level` | Override log level for this probe | *global* | `debug`, `info` |
+
+### Timeout
+
+`timeout` is the budget for the whole probe. It is capped to the Prometheus
+scrape timeout (`X-Prometheus-Scrape-Timeout-Seconds` header) minus
+`--ping.timeout-offset`. After reserving `(count - 1) * interval` for the
+pauses between packets, the remaining time is split evenly across packets as
+their reply timeout. If `(count - 1) * interval` does not fit into the timeout,
+the probe is rejected with `400 Bad Request`. Should the deadline still be
+reached, the metrics for the packets sent so far are returned.
 
 ### IP Protocol / Auto-detection
 
@@ -252,6 +262,7 @@ http://localhost:9115/probe?target=example.com&source_ip=192.168.1.100&debug=tru
 | `--ping.default-interval` | Default interval when not specified | `1s` |
 | `--ping.default-packet-size` | Default packet size when not specified | `64` |
 | `--ping.default-timeout` | Default timeout when not specified | `5s` |
+| `--ping.timeout-offset` | Offset subtracted from the Prometheus scrape timeout | `0.5s` |
 | `--ping.default-ip-protocol` | Default IP protocol when not specified in probe URL (`ip4`, `ip6`, `auto`) | `auto` |
 | `--ping.max-count` | Maximum allowed packet count | `100` |
 | `--ping.max-packet-size` | Maximum allowed packet size | `65507` |
