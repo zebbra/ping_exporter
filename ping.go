@@ -206,8 +206,7 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 	var (
 		requestType icmp.Type
 		replyType   icmp.Type
-		conn        *icmp.PacketConn
-		v4RawConn   *ipv4.RawConn
+		network     string
 		useUDP      bool
 	)
 
@@ -224,62 +223,34 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 	}
 
 	if dstAddr.IP.To4() == nil {
-		// IPv6
 		stats.IPVersion = "6"
 		requestType = ipv6.ICMPTypeEchoRequest
 		replyType = ipv6.ICMPTypeEchoReply
 		if srcIP == nil {
-			srcIP = net.ParseIP("::")
+			srcIP = net.IPv6unspecified
 		}
-
-		var err error
-		if caps.IPv6UDP {
-			conn, err = icmp.ListenPacket("udp6", srcIP.String())
-			useUDP = true
-		} else {
-			conn, err = icmp.ListenPacket("ip6:ipv6-icmp", srcIP.String())
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to create IPv6 ICMP socket: %w", err)
+		network, useUDP = "ip6:ipv6-icmp", caps.IPv6UDP
+		if useUDP {
+			network = "udp6"
 		}
 	} else {
-		// IPv4
 		stats.IPVersion = "4"
 		requestType = ipv4.ICMPTypeEcho
 		replyType = ipv4.ICMPTypeEchoReply
 		if srcIP == nil {
 			srcIP = net.IPv4zero
 		}
-
-		var err error
-		if dontFragment {
-			// Need raw socket for don't fragment
-			netConn, err := net.ListenPacket("ip4:icmp", srcIP.String())
-			if err != nil {
-				return nil, fmt.Errorf("failed to create raw IPv4 ICMP socket: %w", err)
-			}
-			defer netConn.Close()
-
-			v4RawConn, err = ipv4.NewRawConn(netConn)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create raw connection: %w", err)
-			}
-		} else {
-			if caps.IPv4UDP {
-				conn, err = icmp.ListenPacket("udp4", srcIP.String())
-				useUDP = true
-			} else {
-				conn, err = icmp.ListenPacket("ip4:icmp", srcIP.String())
-			}
-			if err != nil {
-				return nil, fmt.Errorf("failed to create IPv4 ICMP socket: %w", err)
-			}
+		network, useUDP = "ip4:icmp", caps.IPv4UDP
+		if useUDP {
+			network = "udp4"
 		}
 	}
 
-	if conn != nil {
-		defer conn.Close()
+	conn, err := listenICMP(network, srcIP.String(), dontFragment)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create IPv%s ICMP socket: %w", stats.IPVersion, err)
 	}
+	defer conn.Close()
 
 	// Create payload
 	payload := make([]byte, packetSize)
@@ -302,7 +273,7 @@ loop:
 
 		// Create a timeout context for this individual ping
 		pingCtx, cancel := context.WithTimeout(ctx, replyTimeout)
-		rtt, err := sendPing(pingCtx, conn, v4RawConn, dstAddr, srcIP, requestType, replyType, seq, payload, useUDP, logger)
+		rtt, err := sendPing(pingCtx, conn, dstAddr, requestType, replyType, seq, payload, useUDP, logger)
 		cancel()
 
 		if err != nil {
@@ -344,7 +315,7 @@ func perPacketTimeout(ctx context.Context, count int, interval time.Duration) ti
 	return budget / time.Duration(count)
 }
 
-func sendPing(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.RawConn, dstAddr *net.IPAddr, srcIP net.IP, requestType, replyType icmp.Type, seq uint16, payload []byte, useUDP bool, logger *slog.Logger) (time.Duration, error) {
+func sendPing(ctx context.Context, conn net.PacketConn, dstAddr *net.IPAddr, requestType, replyType icmp.Type, seq uint16, payload []byte, useUDP bool, logger *slog.Logger) (time.Duration, error) {
 	// Create ICMP message
 	body := &icmp.Echo{
 		ID:   icmpID,
@@ -376,23 +347,7 @@ func sendPing(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.RawCon
 	// Send packet and record time
 	start := time.Now()
 
-	if v4RawConn != nil {
-		// Raw IPv4 with don't fragment
-		header := &ipv4.Header{
-			Version:  ipv4.Version,
-			Len:      ipv4.HeaderLen,
-			Protocol: 1,
-			TotalLen: ipv4.HeaderLen + len(wb),
-			TTL:      64,
-			Dst:      dstAddr.IP,
-			Src:      srcIP,
-			Flags:    ipv4.DontFragment,
-		}
-		err = v4RawConn.WriteTo(header, wb, nil)
-	} else {
-		_, err = conn.WriteTo(wb, dst)
-	}
-
+	_, err = conn.WriteTo(wb, dst)
 	if err != nil {
 		return 0, fmt.Errorf("failed to send ICMP packet: %w", err)
 	}
@@ -400,10 +355,10 @@ func sendPing(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.RawCon
 	logger.Debug("ICMP packet sent", "dst", dst.String())
 
 	// Wait for reply
-	return waitForReply(ctx, conn, v4RawConn, dst, replyType, body.ID, body.Seq, wb, useUDP, start, logger)
+	return waitForReply(ctx, conn, dst, replyType, body.ID, body.Seq, wb, useUDP, start, logger)
 }
 
-func waitForReply(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.RawConn, dst net.Addr, replyType icmp.Type, expectedID, expectedSeq int, expectedData []byte, useUDP bool, sendTime time.Time, logger *slog.Logger) (time.Duration, error) {
+func waitForReply(ctx context.Context, conn net.PacketConn, dst net.Addr, replyType icmp.Type, expectedID, expectedSeq int, expectedData []byte, useUDP bool, sendTime time.Time, logger *slog.Logger) (time.Duration, error) {
 	var dstAddr *net.IPAddr
 	if ipAddr, ok := dst.(*net.IPAddr); ok {
 		dstAddr = ipAddr
@@ -413,36 +368,12 @@ func waitForReply(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.Ra
 	rb := make([]byte, 1500)
 	deadline, _ := ctx.Deadline()
 
-	if conn != nil {
-		err := conn.SetReadDeadline(deadline)
-		if err != nil {
-			return 0, fmt.Errorf("failed to set read deadline: %w", err)
-		}
-	} else if v4RawConn != nil {
-		err := v4RawConn.SetReadDeadline(deadline)
-		if err != nil {
-			return 0, fmt.Errorf("failed to set read deadline: %w", err)
-		}
+	if err := conn.SetReadDeadline(deadline); err != nil {
+		return 0, fmt.Errorf("failed to set read deadline: %w", err)
 	}
 
 	for {
-		var n int
-		var peer net.Addr
-		var err error
-
-		if v4RawConn != nil {
-			var h *ipv4.Header
-			var p []byte
-			h, p, _, err = v4RawConn.ReadFrom(rb)
-			if err == nil {
-				copy(rb, p)
-				n = len(p)
-				peer = &net.IPAddr{IP: h.Src}
-			}
-		} else {
-			n, peer, err = conn.ReadFrom(rb)
-		}
-
+		n, peer, err := conn.ReadFrom(rb)
 		receiveTime := time.Now()
 
 		if err != nil {

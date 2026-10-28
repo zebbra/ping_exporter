@@ -201,7 +201,7 @@ The ping exporter is configured via URL parameters for ping settings and command
 | `timeout` | Maximum duration for the entire probe | `5s` | `10s`, `30s` |
 | `ip_protocol` | IP protocol: `ip4`, `ip6`, or `auto` (see below) | `auto` | `ip6` |
 | `source_ip` | Source IP address for outgoing packets | *auto* | `192.168.1.100` |
-| `dont_fragment` | Set the Don't Fragment bit in IPv4 header | `false` | `true` |
+| `dont_fragment` | Never fragment outgoing packets (IPv4 DF bit, IPv6 `IPV6_DONTFRAG`); oversized packets count as lost. Linux only | `false` | `true` |
 | `debug` | Enable debug output | `false` | `true` |
 | `log_level` | Override log level for this probe | *global* | `debug`, `info` |
 
