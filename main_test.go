@@ -470,3 +470,20 @@ func TestLevelHandlerLowersLevel(t *testing.T) {
 		t.Errorf("Expected debug record with attrs, got: %q", buf.String())
 	}
 }
+
+func TestDebugOutputIgnoresGzip(t *testing.T) {
+	*defaultCount = 1
+	*defaultInterval = time.Second
+	*defaultTimeout = 2 * time.Second
+	*maxCount = 100
+
+	logger := promslog.New(&promslog.Config{})
+	req := httptest.NewRequest("GET", "/probe?target=invalid.test&debug=true", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	handleProbe(w, req, logger, Capabilities{IPv4: true})
+
+	if !strings.Contains(w.Body.String(), "probe_success 0") {
+		t.Errorf("Expected plain text metrics in debug output, got:\n%q", w.Body.String())
+	}
+}

@@ -376,8 +376,9 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger, ca
 		debugOutput += "\n\nMetrics that would have been returned:\n"
 		w.Write([]byte(debugOutput))
 
-		// Also write the metrics
-		h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
+		// Also write the metrics. The headers are already sent at this point,
+		// so the handler must not switch to gzip.
+		h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{DisableCompression: true})
 		h.ServeHTTP(w, r)
 		return
 	}
