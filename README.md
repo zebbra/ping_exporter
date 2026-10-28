@@ -205,6 +205,16 @@ The ping exporter is configured via URL parameters for ping settings and command
 | `debug` | Enable debug output | `false` | `true` |
 | `log_level` | Override log level for this probe | *global* | `debug`, `info` |
 
+### Timeout
+
+`timeout` is the budget for the whole probe. It is capped to the Prometheus
+scrape timeout (`X-Prometheus-Scrape-Timeout-Seconds` header) minus
+`--ping.timeout-offset`. After reserving `(count - 1) * interval` for the
+pauses between packets, the remaining time is split evenly across packets as
+their reply timeout. If `(count - 1) * interval` does not fit into the timeout,
+the probe is rejected with `400 Bad Request`. Should the deadline still be
+reached, the metrics for the packets sent so far are returned.
+
 ### IP Protocol / Auto-detection
 
 The `ip_protocol` parameter (and the `--ping.default-ip-protocol` flag) controls how the target is resolved:
@@ -252,6 +262,7 @@ http://localhost:9115/probe?target=example.com&source_ip=192.168.1.100&debug=tru
 | `--ping.default-interval` | Default interval when not specified | `1s` |
 | `--ping.default-packet-size` | Default packet size when not specified | `64` |
 | `--ping.default-timeout` | Default timeout when not specified | `5s` |
+| `--ping.timeout-offset` | Offset subtracted from the Prometheus scrape timeout | `0.5s` |
 | `--ping.default-ip-protocol` | Default IP protocol when not specified in probe URL (`ip4`, `ip6`, `auto`) | `auto` |
 | `--ping.max-count` | Maximum allowed packet count | `100` |
 | `--ping.max-packet-size` | Maximum allowed packet size | `65507` |

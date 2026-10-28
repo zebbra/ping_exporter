@@ -45,6 +45,7 @@ var (
 	defaultInterval   = kingpin.Flag("ping.default-interval", "Default interval when not specified.").Default("1s").Duration()
 	defaultPacketSize = kingpin.Flag("ping.default-packet-size", "Default packet size when not specified.").Default("64").Int()
 	defaultTimeout    = kingpin.Flag("ping.default-timeout", "Default timeout when not specified.").Default("5s").Duration()
+	timeoutOffset     = kingpin.Flag("ping.timeout-offset", "Offset to subtract from the Prometheus scrape timeout.").Default("0.5s").Duration()
 	defaultIPProtocol = kingpin.Flag("ping.default-ip-protocol", "Default IP protocol when not specified in probe URL (ip4, ip6, auto). auto resolves literal IPs by family and prefers IPv6 for hostnames.").Default("auto").Enum("ip4", "ip6", "auto")
 	maxCount          = kingpin.Flag("ping.max-count", "Maximum allowed packet count.").Default("100").Int()
 	maxPacketSize     = kingpin.Flag("ping.max-packet-size", "Maximum allowed packet size.").Default("65507").Int()
@@ -259,6 +260,15 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger, ca
 		}
 	}
 
+	timeout = capToScrapeTimeout(r, timeout, *timeoutOffset)
+
+	// Every packet needs some time to wait for its reply on top of the
+	// intervals between packets.
+	if minDuration := time.Duration(count-1) * interval; minDuration >= timeout {
+		http.Error(w, fmt.Sprintf("Probe timeout %s is too short for %d packets at %s interval", timeout, count, interval), http.StatusBadRequest)
+		return
+	}
+
 	ipProtocol := params.Get("ip_protocol")
 	if ipProtocol == "" {
 		ipProtocol = *defaultIPProtocol
@@ -372,4 +382,22 @@ func handleProbe(w http.ResponseWriter, r *http.Request, logger *slog.Logger, ca
 	// Return Prometheus metrics
 	h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	h.ServeHTTP(w, r)
+}
+
+// capToScrapeTimeout lowers timeout so the probe finishes within the scrape
+// timeout announced by Prometheus, minus offset to leave room for the response.
+func capToScrapeTimeout(r *http.Request, timeout, offset time.Duration) time.Duration {
+	v := r.Header.Get("X-Prometheus-Scrape-Timeout-Seconds")
+	if v == "" {
+		return timeout
+	}
+	seconds, err := strconv.ParseFloat(v, 64)
+	if err != nil || seconds <= 0 {
+		return timeout
+	}
+	scrapeTimeout := time.Duration(seconds*float64(time.Second)) - offset
+	if scrapeTimeout > 0 && scrapeTimeout < timeout {
+		return scrapeTimeout
+	}
+	return timeout
 }

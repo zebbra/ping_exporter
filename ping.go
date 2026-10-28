@@ -18,6 +18,9 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
+// defaultPerPacketTimeout is used when the probe context has no deadline.
+const defaultPerPacketTimeout = 2 * time.Second
+
 var (
 	icmpID            int
 	icmpSequence      uint16
@@ -161,6 +164,9 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 		logger.Info("Ping failed", "err", err)
 		return false
 	}
+	if stats.PacketsSent < count {
+		logger.Info("Probe deadline reached before all packets were sent", "sent", stats.PacketsSent)
+	}
 
 	logger.Info("Ping complete", "target", target, "sent", stats.PacketsSent, "received", stats.PacketsReceived, "loss", stats.PacketLoss, "avg_rtt", stats.AvgRTT)
 
@@ -276,12 +282,14 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 	payload := make([]byte, packetSize)
 	copy(payload, "Prometheus Ping Exporter")
 
-	// Send pings
+	replyTimeout := perPacketTimeout(ctx, count, interval)
+
+	// Send pings. Hitting the probe deadline ends the loop early but keeps the
+	// statistics gathered so far.
+loop:
 	for i := 0; i < count; i++ {
-		select {
-		case <-ctx.Done():
-			return stats, ctx.Err()
-		default:
+		if ctx.Err() != nil {
+			break
 		}
 
 		stats.PacketsSent++
@@ -290,7 +298,7 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 		logger.Debug("Sending ping packet", "seq", seq, "packet", i+1, "of", count)
 
 		// Create a timeout context for this individual ping
-		pingCtx, cancel := context.WithTimeout(ctx, time.Second*2)
+		pingCtx, cancel := context.WithTimeout(ctx, replyTimeout)
 		rtt, err := sendPing(pingCtx, conn, v4RawConn, dstAddr, srcIP, requestType, replyType, seq, payload, useUDP, logger)
 		cancel()
 
@@ -306,7 +314,7 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 		if i < count-1 {
 			select {
 			case <-ctx.Done():
-				return stats, ctx.Err()
+				break loop
 			case <-time.After(interval):
 			}
 		}
@@ -316,6 +324,21 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 	calculateStats(stats)
 
 	return stats, nil
+}
+
+// perPacketTimeout splits the time left until the probe deadline evenly across
+// all packets, after reserving the intervals between them, so that a lost
+// packet cannot eat the budget of the packets that follow.
+func perPacketTimeout(ctx context.Context, count int, interval time.Duration) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return defaultPerPacketTimeout
+	}
+	budget := time.Until(deadline) - time.Duration(count-1)*interval
+	if budget <= 0 {
+		return 0
+	}
+	return budget / time.Duration(count)
 }
 
 func sendPing(ctx context.Context, conn *icmp.PacketConn, v4RawConn *ipv4.RawConn, dstAddr *net.IPAddr, srcIP net.IP, requestType, replyType icmp.Type, seq uint16, payload []byte, useUDP bool, logger *slog.Logger) (time.Duration, error) {

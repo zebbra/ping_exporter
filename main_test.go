@@ -381,3 +381,47 @@ func TestProbeMetricsFormat(t *testing.T) {
 		t.Errorf("Missing TYPE comments in Prometheus output")
 	}
 }
+
+func TestProbeTimeoutTooShort(t *testing.T) {
+	*defaultCount = 3
+	*defaultInterval = time.Second
+	*defaultTimeout = 5 * time.Second
+	*maxCount = 100
+
+	logger := promslog.New(&promslog.Config{})
+
+	req := httptest.NewRequest("GET", "/probe?target=127.0.0.1&count=10&interval=1s&timeout=5s", nil)
+	w := httptest.NewRecorder()
+	handleProbe(w, req, logger, Capabilities{IPv4: true})
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
+	}
+}
+
+func TestCapToScrapeTimeout(t *testing.T) {
+	tests := []struct {
+		name     string
+		header   string
+		timeout  time.Duration
+		expected time.Duration
+	}{
+		{"no header", "", 5 * time.Second, 5 * time.Second},
+		{"scrape timeout lower", "3", 5 * time.Second, 2500 * time.Millisecond},
+		{"scrape timeout higher", "10", 5 * time.Second, 5 * time.Second},
+		{"invalid header", "abc", 5 * time.Second, 5 * time.Second},
+		{"offset larger than scrape timeout", "0.2", 5 * time.Second, 5 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/probe", nil)
+			if tt.header != "" {
+				req.Header.Set("X-Prometheus-Scrape-Timeout-Seconds", tt.header)
+			}
+			if got := capToScrapeTimeout(req, tt.timeout, 500*time.Millisecond); got != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, got)
+			}
+		})
+	}
+}
