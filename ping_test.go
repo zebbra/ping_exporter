@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -416,5 +417,34 @@ func TestProbePingDeadlineKeepsMetrics(t *testing.T) {
 	}
 	if found["probe_ping_packet_loss_ratio"] != 1 {
 		t.Errorf("Expected packet loss ratio 1, got %v", found["probe_ping_packet_loss_ratio"])
+	}
+}
+
+func TestPerformPingSourceIP(t *testing.T) {
+	logger := promslog.New(&promslog.Config{})
+	caps := DetectCapabilities(logger)
+	if !caps.IPv4 {
+		t.Skip("No IPv4 ICMP socket available")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	dst := &net.IPAddr{IP: net.ParseIP("127.0.0.1")}
+
+	// 192.0.2.1 is not a local address, binding to it must fail
+	if _, err := performPing(ctx, dst, "192.0.2.1", 1, time.Millisecond, 64, false, caps, logger); err == nil {
+		t.Error("Expected error when binding to a non-local source IP")
+	}
+
+	if _, err := performPing(ctx, dst, "::1", 1, time.Millisecond, 64, false, caps, logger); err == nil {
+		t.Error("Expected error for source IP with mismatching address family")
+	}
+
+	stats, err := performPing(ctx, dst, "127.0.0.1", 1, time.Millisecond, 64, false, caps, logger)
+	if err != nil {
+		t.Fatalf("Expected ping from 127.0.0.1 to succeed: %v", err)
+	}
+	if stats.PacketsReceived != 1 {
+		t.Errorf("Expected 1 packet received, got %d", stats.PacketsReceived)
 	}
 }

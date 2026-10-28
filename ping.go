@@ -218,6 +218,9 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 		if srcIP == nil {
 			return nil, fmt.Errorf("invalid source IP: %s", sourceIP)
 		}
+		if (srcIP.To4() == nil) != (dstAddr.IP.To4() == nil) {
+			return nil, fmt.Errorf("source IP %s does not match address family of target %s", sourceIP, dstAddr)
+		}
 	}
 
 	if dstAddr.IP.To4() == nil {
@@ -263,10 +266,10 @@ func performPing(ctx context.Context, dstAddr *net.IPAddr, sourceIP string, coun
 			}
 		} else {
 			if caps.IPv4UDP {
-				conn, err = icmp.ListenPacket("udp4", "0.0.0.0")
+				conn, err = icmp.ListenPacket("udp4", srcIP.String())
 				useUDP = true
 			} else {
-				conn, err = icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+				conn, err = icmp.ListenPacket("ip4:icmp", srcIP.String())
 			}
 			if err != nil {
 				return nil, fmt.Errorf("failed to create IPv4 ICMP socket: %w", err)
