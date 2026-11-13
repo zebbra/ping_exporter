@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -153,6 +154,9 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 	dstAddr, err := resolveTarget(target, network, caps)
 	if err != nil {
 		logger.Error("Failed to resolve target", "err", err)
+		if reason := dnsErrorReason(err); reason != "" {
+			dnsErrorsTotal.WithLabelValues(reason).Inc()
+		}
 		return false
 	}
 
@@ -174,6 +178,23 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 	registerPingMetrics(registry, stats)
 
 	return stats.PacketsReceived > 0
+}
+
+// dnsErrorReason classifies a resolve error for ping_exporter_dns_errors_total.
+// It returns "" for errors that are not DNS lookup failures.
+func dnsErrorReason(err error) string {
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
+		return ""
+	}
+	switch {
+	case dnsErr.IsNotFound:
+		return "not_found"
+	case dnsErr.IsTimeout:
+		return "timeout"
+	default:
+		return "other"
+	}
 }
 
 func resolveTarget(target, network string, caps Capabilities) (*net.IPAddr, error) {
