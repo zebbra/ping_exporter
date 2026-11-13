@@ -941,7 +941,7 @@
           {"matcher": {"id": "byName", "options": "other"}, "properties": [{"id": "color", "value": {"fixedColor": "purple", "mode": "fixed"}}]}
         ]
       },
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 51},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 51},
       "id": 25,
       "options": {
         "tooltip": {"mode": "multi", "sort": "desc"},
@@ -954,6 +954,36 @@
           "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
           "expr": "sum(increase(ping_exporter_dns_errors_total{job=~\"$job\"}[15m])) by (reason)",
           "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Echo requests answered with an ICMP error over the last 15 minutes. net_unreachable = no route, host_unreachable = last hop cannot reach the host (or our own next hop is dead), admin_prohibited = filtered, frag_needed = MTU too small with DF set, ttl_exceeded = routing loop.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2, "fillOpacity": 30, "showPoints": "never", "stacking": {"mode": "normal", "group": "A"}},
+          "unit": "short",
+          "decimals": 0,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 51},
+      "id": 26,
+      "options": {
+        "tooltip": {"mode": "multi", "sort": "desc"},
+        "legend": {"calcs": ["last", "max"], "displayMode": "table", "placement": "right"}
+      },
+      "title": "ICMP Errors (last 15m)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "sum(increase(ping_exporter_icmp_errors_total{job=~\"$job\"}[15m])) by (reason, ip_version)",
+          "legendFormat": "{{reason}} / v{{ip_version}}",
           "refId": "A"
         }
       ]
