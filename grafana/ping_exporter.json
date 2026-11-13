@@ -6,6 +6,13 @@
       "type": "datasource",
       "pluginId": "prometheus",
       "pluginName": "Prometheus"
+    },
+    {
+      "name": "DS_EXPORTER",
+      "label": "Prometheus (exporter metrics)",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
     }
   ],
   "__requires": [
@@ -197,7 +204,7 @@
     },
 
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "thresholds"},
@@ -221,8 +228,8 @@
       "type": "stat",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-          "expr": "ping_exporter_build_info{job=~\"$job\"}",
+          "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
+          "expr": "ping_exporter_build_info{job=~\"$exporter_job\"}",
           "legendFormat": "{{version}}",
           "refId": "A",
           "instant": true
@@ -808,7 +815,7 @@
     },
 
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "palette-classic"},
@@ -839,14 +846,14 @@
       "type": "timeseries",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-          "expr": "sum(rate(ping_exporter_probes_total{job=~\"$job\", result=\"success\"}[5m])) by (ip_version)",
+          "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
+          "expr": "sum(rate(ping_exporter_probes_total{job=~\"$exporter_job\", result=\"success\"}[5m])) by (ip_version)",
           "legendFormat": "success / {{ip_version}}",
           "refId": "A"
         },
         {
-          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-          "expr": "sum(rate(ping_exporter_probes_total{job=~\"$job\", result=\"failure\"}[5m])) by (ip_version)",
+          "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
+          "expr": "sum(rate(ping_exporter_probes_total{job=~\"$exporter_job\", result=\"failure\"}[5m])) by (ip_version)",
           "legendFormat": "failure / {{ip_version}}",
           "refId": "B"
         }
@@ -854,7 +861,7 @@
     },
 
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "palette-classic"},
@@ -878,8 +885,8 @@
       "type": "timeseries",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-          "expr": "go_goroutines{job=~\"$job\"}",
+          "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
+          "expr": "go_goroutines{job=~\"$exporter_job\"}",
           "legendFormat": "goroutines",
           "refId": "A"
         }
@@ -887,7 +894,7 @@
     },
 
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "palette-classic"},
@@ -911,21 +918,21 @@
       "type": "timeseries",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-          "expr": "go_memstats_heap_inuse_bytes{job=~\"$job\"}",
+          "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
+          "expr": "go_memstats_heap_inuse_bytes{job=~\"$exporter_job\"}",
           "legendFormat": "in use",
           "refId": "A"
         },
         {
-          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-          "expr": "go_memstats_heap_idle_bytes{job=~\"$job\"}",
+          "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
+          "expr": "go_memstats_heap_idle_bytes{job=~\"$exporter_job\"}",
           "legendFormat": "idle",
           "refId": "B"
         }
       ]
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
       "description": "Failed DNS lookups of probe targets over the last 15 minutes. not_found = NXDOMAIN (bad or removed target), timeout / other = resolver problem.",
       "fieldConfig": {
         "defaults": {
@@ -951,15 +958,15 @@
       "type": "timeseries",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-          "expr": "sum(increase(ping_exporter_dns_errors_total{job=~\"$job\"}[15m])) by (reason)",
+          "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
+          "expr": "sum(increase(ping_exporter_dns_errors_total{job=~\"$exporter_job\"}[15m])) by (reason)",
           "legendFormat": "{{reason}}",
           "refId": "A"
         }
       ]
     },
     {
-      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
       "description": "Echo requests answered with an ICMP error over the last 15 minutes. net_unreachable = no route, host_unreachable = last hop cannot reach the host (or our own next hop is dead), admin_prohibited = filtered, frag_needed = MTU too small with DF set, ttl_exceeded = routing loop.",
       "fieldConfig": {
         "defaults": {
@@ -981,8 +988,8 @@
       "type": "timeseries",
       "targets": [
         {
-          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-          "expr": "sum(increase(ping_exporter_icmp_errors_total{job=~\"$job\"}[15m])) by (reason, ip_version)",
+          "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
+          "expr": "sum(increase(ping_exporter_icmp_errors_total{job=~\"$exporter_job\"}[15m])) by (reason, ip_version)",
           "legendFormat": "{{reason}} / v{{ip_version}}",
           "refId": "A"
         }
@@ -998,7 +1005,7 @@
         "current": {},
         "hide": 0,
         "includeAll": false,
-        "label": "Datasource",
+        "label": "Probe datasource",
         "multi": false,
         "name": "DS_PROMETHEUS",
         "options": [],
@@ -1009,12 +1016,44 @@
       {
         "current": {},
         "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "definition": "label_values(probe_ping_packets_sent, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Probe job",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": {
+          "query": "label_values(probe_ping_packets_sent, job)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "description": "Datasource with the exporter's own /metrics (ping_exporter_*). Same as the probe datasource if both are scraped into one Prometheus.",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Exporter datasource",
+        "multi": false,
+        "name": "DS_EXPORTER",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "current": {},
+        "datasource": {"type": "prometheus", "uid": "${DS_EXPORTER}"},
         "definition": "label_values(ping_exporter_build_info, job)",
         "hide": 0,
         "includeAll": false,
-        "label": "Job",
+        "label": "Exporter job",
         "multi": false,
-        "name": "job",
+        "name": "exporter_job",
         "options": [],
         "query": {
           "query": "label_values(ping_exporter_build_info, job)",
