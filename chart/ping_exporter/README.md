@@ -137,6 +137,8 @@ The following table lists the configurable parameters of the ping_exporter chart
 | `nodeSelector` | Node selector | `{}` |
 | `tolerations` | Tolerations | `[]` |
 | `affinity` | Affinity | `{}` |
+| `dnsPolicy` | Pod DNS policy | `""` |
+| `dnsConfig` | Pod DNS config, e.g. `options: [{name: ndots, value: "1"}]` | `{}` |
 
 ## Examples
 
