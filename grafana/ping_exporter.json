@@ -1016,7 +1016,7 @@
       {
         "current": {},
         "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-        "definition": "label_values(probe_ping_packets_sent, job)",
+        "definition": "label_values(probe_ping_packet_loss_ratio, job)",
         "hide": 0,
         "includeAll": false,
         "label": "Probe job",
@@ -1024,7 +1024,7 @@
         "name": "job",
         "options": [],
         "query": {
-          "query": "label_values(probe_ping_packets_sent, job)",
+          "query": "label_values(probe_ping_packet_loss_ratio, job)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
