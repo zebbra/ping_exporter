@@ -7,14 +7,24 @@ import (
 	"os"
 	"syscall"
 
+	"golang.org/x/net/icmp"
 	"golang.org/x/sys/unix"
 )
 
-func listenICMPDontFragment(network, address string) (net.PacketConn, error) {
+// listenICMP opens an ICMP socket. network is one of udp4, udp6 (unprivileged
+// ping sockets), ip4:icmp or ip6:ipv6-icmp (raw sockets). With dontFragment
+// set, outgoing packets are never fragmented and oversized sends fail.
+//
+// Ping sockets get IP_RECVERR so ICMP errors for our echo requests are queued
+// on the socket error queue (see readPacket); raw sockets see them anyway.
+func listenICMP(network, address string, dontFragment bool) (net.PacketConn, error) {
 	switch network {
 	case "udp4", "udp6":
-		return listenPingSocket(network, address)
+		return listenPingSocket(network, address, dontFragment)
 	case "ip4:icmp", "ip6:ipv6-icmp":
+		if !dontFragment {
+			return icmp.ListenPacket(network, address)
+		}
 		lc := net.ListenConfig{
 			Control: func(_, _ string, c syscall.RawConn) error {
 				var serr error
@@ -35,7 +45,7 @@ func listenICMPDontFragment(network, address string) (net.PacketConn, error) {
 
 // listenPingSocket mirrors icmp.ListenPacket for unprivileged ping sockets,
 // which offers no hook to set socket options before use.
-func listenPingSocket(network, address string) (net.PacketConn, error) {
+func listenPingSocket(network, address string, dontFragment bool) (net.PacketConn, error) {
 	ip := net.ParseIP(address)
 	if ip == nil {
 		return nil, fmt.Errorf("invalid address %q", address)
@@ -61,7 +71,13 @@ func listenPingSocket(network, address string) (net.PacketConn, error) {
 	if err != nil {
 		return nil, os.NewSyscallError("socket", err)
 	}
-	if err := setDontFragment(s, family == unix.AF_INET6); err != nil {
+	if dontFragment {
+		if err := setDontFragment(s, family == unix.AF_INET6); err != nil {
+			unix.Close(s)
+			return nil, err
+		}
+	}
+	if err := setRecvErr(s, family == unix.AF_INET6); err != nil {
 		unix.Close(s)
 		return nil, err
 	}
@@ -80,4 +96,11 @@ func setDontFragment(fd int, ipv6 bool) error {
 		return os.NewSyscallError("setsockopt", unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_DONTFRAG, 1))
 	}
 	return os.NewSyscallError("setsockopt", unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_MTU_DISCOVER, unix.IP_PMTUDISC_DO))
+}
+
+func setRecvErr(fd int, ipv6 bool) error {
+	if ipv6 {
+		return os.NewSyscallError("setsockopt", unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_RECVERR, 1))
+	}
+	return os.NewSyscallError("setsockopt", unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_RECVERR, 1))
 }
