@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -153,6 +154,9 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 	dstAddr, err := resolveTarget(target, network, caps)
 	if err != nil {
 		logger.Error("Failed to resolve target", "err", err)
+		if reason := dnsErrorReason(err); reason != "" {
+			dnsErrorsTotal.WithLabelValues(reason).Inc()
+		}
 		return false
 	}
 
@@ -174,6 +178,23 @@ func probePing(ctx context.Context, target string, count int, interval time.Dura
 	registerPingMetrics(registry, stats)
 
 	return stats.PacketsReceived > 0
+}
+
+// dnsErrorReason classifies a resolve error for ping_exporter_dns_errors_total.
+// It returns "" for errors that are not DNS lookup failures.
+func dnsErrorReason(err error) string {
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
+		return ""
+	}
+	switch {
+	case dnsErr.IsNotFound:
+		return "not_found"
+	case dnsErr.IsTimeout:
+		return "timeout"
+	default:
+		return "other"
+	}
 }
 
 func resolveTarget(target, network string, caps Capabilities) (*net.IPAddr, error) {
@@ -278,6 +299,10 @@ loop:
 
 		if err != nil {
 			logger.Debug("Ping failed", "seq", seq, "err", err)
+			var ierr *icmpError
+			if errors.As(err, &ierr) {
+				icmpErrorsTotal.WithLabelValues(stats.IPVersion, ierr.reason).Inc()
+			}
 		} else {
 			stats.PacketsReceived++
 			stats.RTTs = append(stats.RTTs, rtt)
@@ -373,11 +398,12 @@ func waitForReply(ctx context.Context, conn net.PacketConn, dst net.Addr, replyT
 	}
 
 	for {
-		n, peer, err := conn.ReadFrom(rb)
+		n, peer, qerr, err := readPacket(conn, rb)
 		receiveTime := time.Now()
 
 		if err != nil {
-			if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+			var nerr net.Error
+			if errors.As(err, &nerr) && nerr.Timeout() {
 				logger.Debug("Timeout waiting for ICMP reply")
 				return 0, fmt.Errorf("timeout waiting for ICMP reply")
 			}
@@ -385,18 +411,24 @@ func waitForReply(ctx context.Context, conn net.PacketConn, dst net.Addr, replyT
 			return 0, fmt.Errorf("failed to read ICMP reply: %w", err)
 		}
 
-		logger.Debug("Received packet", "from", peer.String(), "size", n, "expected_from", dst.String())
+		isIPv6 := dstAddr != nil && dstAddr.IP.To4() == nil
 
-		// Check if this is from our target
-		if peer.String() != dst.String() {
-			logger.Debug("Packet from unexpected source", "from", peer.String(), "expected", dst.String())
+		// ICMP error queued on a ping socket. The kernel only queues errors
+		// for this socket, so matching the sequence number is enough.
+		if qerr != nil {
+			logger.Debug("Received queued ICMP error", "from", qerr.from, "type", qerr.typ, "code", qerr.code, "seq", qerr.seq)
+			if qerr.seq == expectedSeq {
+				return 0, &icmpError{reason: icmpErrorReason(isIPv6, qerr.typ, qerr.code), from: qerr.from, typ: qerr.typ, code: qerr.code}
+			}
 			continue
 		}
+
+		logger.Debug("Received packet", "from", peer.String(), "size", n, "expected_from", dst.String())
 
 		// Parse ICMP message
 		var rm *icmp.Message
 		var parseErr error
-		if dstAddr != nil && dstAddr.IP.To4() == nil {
+		if isIPv6 {
 			// IPv6 - protocol 58
 			rm, parseErr = icmp.ParseMessage(58, rb[:n])
 		} else {
@@ -405,6 +437,30 @@ func waitForReply(ctx context.Context, conn net.PacketConn, dst net.Addr, replyT
 		}
 		if parseErr != nil {
 			logger.Debug("Failed to parse ICMP message", "err", parseErr)
+			continue
+		}
+
+		// ICMP errors come from whichever router (or our own kernel) rejected
+		// the request, so they are matched by the quoted request, not the peer.
+		if data := originalDatagram(rm); data != nil && dstAddr != nil {
+			checkID := !(useUDP && runtime.GOOS == "linux")
+			if matchQuotedEcho(data, dstAddr.IP, expectedID, expectedSeq, checkID) {
+				typ, code := icmpTypeCode(rm), rm.Code
+				var from net.IP
+				switch a := peer.(type) {
+				case *net.IPAddr:
+					from = a.IP
+				case *net.UDPAddr:
+					from = a.IP
+				}
+				return 0, &icmpError{reason: icmpErrorReason(isIPv6, typ, code), from: from, typ: typ, code: code}
+			}
+			continue
+		}
+
+		// Check if this is from our target
+		if peer.String() != dst.String() {
+			logger.Debug("Packet from unexpected source", "from", peer.String(), "expected", dst.String())
 			continue
 		}
 
