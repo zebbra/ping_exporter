@@ -851,7 +851,7 @@
             "type": "prometheus",
             "uid": "${DS_EXPORTER}"
           },
-          "expr": "sum by (result) (rate(ping_exporter_probes_total{job=~\"$exporter_job\"}[5m]))",
+          "expr": "sum by (result) (rate(ping_exporter_probes_total{job=~\"$exporter_job\"}[$__rate_interval]))",
           "legendFormat": "{{result}}",
           "refId": "A"
         }
@@ -944,7 +944,7 @@
     },
     {
       "type": "timeseries",
-      "title": "DNS errors (last 15m)",
+      "title": "DNS errors",
       "id": 13,
       "datasource": {
         "type": "prometheus",
@@ -956,7 +956,7 @@
             "type": "prometheus",
             "uid": "${DS_EXPORTER}"
           },
-          "expr": "sum by (reason) (increase(ping_exporter_dns_errors_total{job=~\"$exporter_job\"}[15m]))",
+          "expr": "sum by (reason) (rate(ping_exporter_dns_errors_total{job=~\"$exporter_job\"}[$__rate_interval])) * 60",
           "legendFormat": "{{reason}}",
           "refId": "A"
         }
@@ -982,9 +982,8 @@
               "group": "A"
             }
           },
-          "unit": "short",
-          "min": 0,
-          "decimals": 0
+          "unit": "suffix:/min",
+          "min": 0
         },
         "overrides": [
           {
@@ -1048,11 +1047,11 @@
           "placement": "right"
         }
       },
-      "description": "Failed DNS lookups of probe targets. not_found = NXDOMAIN (wrong or removed target), timeout / other = resolver problem."
+      "description": "Failed DNS lookups of probe targets per minute. not_found = NXDOMAIN (wrong or removed target), timeout / other = resolver problem."
     },
     {
       "type": "timeseries",
-      "title": "ICMP errors (last 15m)",
+      "title": "ICMP errors",
       "id": 14,
       "datasource": {
         "type": "prometheus",
@@ -1064,7 +1063,7 @@
             "type": "prometheus",
             "uid": "${DS_EXPORTER}"
           },
-          "expr": "sum by (reason, ip_version) (increase(ping_exporter_icmp_errors_total{job=~\"$exporter_job\"}[15m]))",
+          "expr": "sum by (reason, ip_version) (rate(ping_exporter_icmp_errors_total{job=~\"$exporter_job\"}[$__rate_interval])) * 60",
           "legendFormat": "{{reason}} / v{{ip_version}}",
           "refId": "A"
         }
@@ -1090,9 +1089,8 @@
               "group": "A"
             }
           },
-          "unit": "short",
-          "min": 0,
-          "decimals": 0
+          "unit": "suffix:/min",
+          "min": 0
         },
         "overrides": []
       },
@@ -1110,7 +1108,7 @@
           "placement": "right"
         }
       },
-      "description": "Echo requests answered with an ICMP error. net_unreachable = no route, host_unreachable = last hop cannot reach the host (or our own next hop is dead), admin_prohibited = filtered, frag_needed = MTU too small with DF set, ttl_exceeded = routing loop."
+      "description": "Echo requests answered with an ICMP error, per minute. net_unreachable = no route, host_unreachable = last hop cannot reach the host (or our own next hop is dead), admin_prohibited = filtered, frag_needed = MTU too small with DF set, ttl_exceeded = routing loop."
     },
     {
       "type": "row",
@@ -1139,7 +1137,7 @@
             "type": "prometheus",
             "uid": "${DS_EXPORTER}"
           },
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(ping_exporter_probe_duration_seconds_bucket{job=~\"$exporter_job\"}[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(ping_exporter_probe_duration_seconds_bucket{job=~\"$exporter_job\"}[$__rate_interval])))",
           "legendFormat": "p50",
           "refId": "A"
         },
@@ -1148,7 +1146,7 @@
             "type": "prometheus",
             "uid": "${DS_EXPORTER}"
           },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(ping_exporter_probe_duration_seconds_bucket{job=~\"$exporter_job\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ping_exporter_probe_duration_seconds_bucket{job=~\"$exporter_job\"}[$__rate_interval])))",
           "legendFormat": "p95",
           "refId": "B"
         },
@@ -1157,7 +1155,7 @@
             "type": "prometheus",
             "uid": "${DS_EXPORTER}"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(ping_exporter_probe_duration_seconds_bucket{job=~\"$exporter_job\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(ping_exporter_probe_duration_seconds_bucket{job=~\"$exporter_job\"}[$__rate_interval])))",
           "legendFormat": "p99",
           "refId": "C"
         }
