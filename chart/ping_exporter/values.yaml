@@ -125,6 +125,17 @@ affinity: {}
 
 topologySpreadConstraints: []
 
+# Pod DNS policy, e.g. ClusterFirst (Kubernetes default) or Default.
+dnsPolicy: ""
+
+# Pod DNS config. Kubernetes uses ndots:5, so a target like switch01.example.com
+# is first tried with every cluster search domain. ndots:1 resolves names with a
+# dot as given, which saves DNS queries for every probe, failing ones included.
+dnsConfig: {}
+#  options:
+#    - name: ndots
+#      value: "1"
+
 # Ping exporter specific configuration
 pingExporter:
   # Command-line arguments for the ping exporter
