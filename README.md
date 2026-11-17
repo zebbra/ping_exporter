@@ -94,6 +94,44 @@ All probe metrics are prefixed with `probe_ping_`.
 | `probe_ping_rtt_seconds{type="csd"}` | Standard deviation with correction (Bessel's) in seconds |
 | `probe_ping_rtt_seconds{type="range"}` | Range (worst - best) in seconds |
 
+### Exporter Metrics
+
+The exporter's own `/metrics` endpoint adds operational counters across all probes. They carry no per-target labels.
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `ping_exporter_probes_total` | `result`, `ip_version` | Probes executed, by `success` / `failure` |
+| `ping_exporter_packets_sent_total` | `ip_version` | ICMP echo requests sent |
+| `ping_exporter_packets_received_total` | `ip_version` | ICMP echo replies received |
+| `ping_exporter_probe_duration_seconds` | `ip_version` | Histogram of probe durations |
+| `ping_exporter_dns_errors_total` | `reason` | Failed DNS lookups of probe targets |
+| `ping_exporter_icmp_errors_total` | `ip_version`, `reason` | Echo requests answered with an ICMP error instead of a reply |
+| `ping_exporter_capability_info` | `ipv4`, `ipv6` | ICMP socket type detected at startup |
+
+`ping_exporter_dns_errors_total` reasons:
+
+| reason | Meaning |
+|--------|---------|
+| `not_found` | Name does not exist (NXDOMAIN), usually a wrong or removed target |
+| `timeout` | Resolver did not answer |
+| `other` | Any other resolver error, e.g. SERVFAIL |
+
+`ping_exporter_icmp_errors_total` reasons:
+
+| reason | ICMPv4 type/code | ICMPv6 type/code | Typical cause |
+|--------|------------------|------------------|---------------|
+| `net_unreachable` | 3/0, 3/6, 3/11 | 1/0, 1/6 | No route to the network |
+| `host_unreachable` | 3/1, 3/7, 3/12 | 1/3 | Last hop cannot reach the host (ARP/ND), also when the exporter's own next hop is down |
+| `admin_prohibited` | 3/9, 3/10, 3/13 | 1/1, 1/5 | Filtered by a firewall or ACL |
+| `frag_needed` | 3/4 | 2 | Path MTU too small with `dont_fragment` set |
+| `ttl_exceeded` | 11/0 | 3/0 | Routing loop |
+| `port_unreachable` | 3/3 | 1/4 | |
+| `protocol_unreachable` | 3/2 | | |
+| `parameter_problem` | 12 | 4 | |
+| `other` | any other | any other | |
+
+A packet answered with an ICMP error counts as lost right away instead of waiting for the timeout. Routers rate limit ICMP errors, so the counter is a trend, not an exact count.
+
 ### Example Output
 
 ```
@@ -349,6 +387,50 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: 127.0.0.1:9115
+```
+
+## Alerting Rules
+
+Sample rules for the exporter's operational metrics. They compare the last 15 minutes with the 7-day median, so a steady number of broken targets does not fire, only a jump across many targets. The floor of 20 errors keeps them quiet while the median is near zero. Adjust `job` and the thresholds to your setup.
+
+```yaml
+groups:
+  - name: ping-exporter
+    rules:
+      - alert: PingExporterDown
+        expr: up{job="ping_exporter"} == 0
+        for: 5m
+        labels:
+          severity: error
+        annotations:
+          summary: ping exporter is down
+          description: The ping exporter could not be scraped for 5 minutes. Ping probes fail and the rules below cannot fire.
+
+      - alert: PingDNSErrorsIncreased
+        expr: |
+          sum by (reason) (increase(ping_exporter_dns_errors_total{job="ping_exporter"}[15m]))
+            > 3 * quantile_over_time(0.5, (sum by (reason) (increase(ping_exporter_dns_errors_total{job="ping_exporter"}[15m])))[7d:15m])
+          and
+          sum by (reason) (increase(ping_exporter_dns_errors_total{job="ping_exporter"}[15m])) > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'DNS lookups of ping targets fail more often ({{ $labels.reason }})'
+          description: '{{ $value | humanize }} DNS lookups failed with {{ $labels.reason }} in the last 15 minutes, more than three times the 7-day median. timeout/other point to a resolver problem, not_found to many targets removed from DNS.'
+
+      - alert: PingICMPErrorsIncreased
+        expr: |
+          sum by (reason, ip_version) (increase(ping_exporter_icmp_errors_total{job="ping_exporter"}[15m]))
+            > 3 * quantile_over_time(0.5, (sum by (reason, ip_version) (increase(ping_exporter_icmp_errors_total{job="ping_exporter"}[15m])))[7d:15m])
+          and
+          sum by (reason, ip_version) (increase(ping_exporter_icmp_errors_total{job="ping_exporter"}[15m])) > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Pings are answered with ICMP {{ $labels.reason }} (IPv{{ $labels.ip_version }})'
+          description: '{{ $value | humanize }} echo requests got ICMP {{ $labels.reason }} in the last 15 minutes, more than three times the 7-day median. net_unreachable points to missing routes, host_unreachable to a dead next hop or segment, ttl_exceeded to a routing loop.'
 ```
 
 ## Permissions

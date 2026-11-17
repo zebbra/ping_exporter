@@ -75,6 +75,16 @@ var (
 		Buckets: prometheus.DefBuckets,
 	}, []string{"ip_version"})
 
+	dnsErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ping_exporter_dns_errors_total",
+		Help: "Total number of failed DNS lookups for probe targets.",
+	}, []string{"reason"})
+
+	icmpErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ping_exporter_icmp_errors_total",
+		Help: "Total number of echo requests answered with an ICMP error (unreachable, time exceeded, ...).",
+	}, []string{"ip_version", "reason"})
+
 	capabilityInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ping_exporter_capability_info",
 		Help: "ICMP socket capabilities detected at startup (1 = active).",
@@ -83,7 +93,7 @@ var (
 
 func init() {
 	prometheus.MustRegister(version.NewCollector("ping_exporter"))
-	prometheus.MustRegister(probesTotal, packetsSentTotal, packetsReceivedTotal, probeDurationHistogram, capabilityInfo)
+	prometheus.MustRegister(probesTotal, packetsSentTotal, packetsReceivedTotal, probeDurationHistogram, dnsErrorsTotal, icmpErrorsTotal, capabilityInfo)
 }
 
 func main() {

@@ -448,3 +448,23 @@ func TestPerformPingSourceIP(t *testing.T) {
 		t.Errorf("Expected 1 packet received, got %d", stats.PacketsReceived)
 	}
 }
+
+func TestDNSErrorReason(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"not found", &net.DNSError{Err: "no such host", Name: "x.invalid", IsNotFound: true}, "not_found"},
+		{"timeout", &net.DNSError{Err: "i/o timeout", Name: "example.com", IsTimeout: true}, "timeout"},
+		{"server misbehaving", &net.DNSError{Err: "server misbehaving", Name: "example.com"}, "other"},
+		{"not a dns error", &net.AddrError{Err: "invalid address"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := dnsErrorReason(tt.err); got != tt.want {
+				t.Errorf("dnsErrorReason() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
