@@ -5,6 +5,28 @@
 
 The ping exporter allows probing of network targets using ICMP ping with configurable packet counts and detailed statistics reporting. It implements the multi-target exporter pattern where targets are specified via URL parameters, similar to the blackbox exporter.
 
+## Why another ping exporter?
+
+The main use case is **SmokePing-like network quality data in Prometheus**, with the target list driven by Prometheus service discovery instead of a static config.
+
+- **vs. blackbox_exporter**: its ICMP prober sends a single packet per probe. You get "reachable or not" and one RTT sample, but no packet loss ratio, RTT distribution or jitter per probe. Loss can only be estimated over many scrapes, which ties accuracy to the scrape interval. This exporter sends `count` packets per probe and reports loss, min/max/avg/stddev RTT and jitter directly.
+- **vs. SmokePing**: SmokePing gives the right kind of data, but it keeps it in its own RRD storage with its own target config. Here the data lands in Prometheus next to everything else, can be alerted on with regular alerting rules, and is visualized in Grafana.
+- **Service discovery**: targets come from the scrape config (`static_configs`, `dns_sd_configs`, `file_sd_configs`, `http_sd_configs`, `kubernetes_sd_configs`, ...) through the multi-target pattern. Adding a target never requires touching or restarting the exporter.
+- **Per-request parameters**: `count`, `interval`, `packet_size`, `timeout`, `source_ip` and more are URL parameters, so different target groups can be probed differently from one exporter, without predefining modules.
+- **Failure detail**: DNS lookup errors and ICMP errors (e.g. destination unreachable, TTL exceeded) are counted separately, so "down" can be told apart from "not resolvable" or "rejected by a router".
+
+### Dashboards
+
+Two Grafana dashboards are included in [`grafana/`](grafana/):
+
+**Ping Overview** ([`grafana/ping_exporter.json`](grafana/ping_exporter.json)): targets up/down, packet loss and RTT distribution across all targets, DNS and ICMP errors, and exporter health. It shows aggregates only, so it stays usable with tens of thousands of targets.
+
+![Ping Overview dashboard](docs/images/dashboard-overview.png)
+
+**Ping Target** ([`grafana/ping_target.json`](grafana/ping_target.json)): one target in SmokePing style, with an RTT band from best to worst packet, the mean RTT, packet loss bars, an up/loss status bar and availability over the selected range.
+
+![Ping Target dashboard](docs/images/dashboard-target.png)
+
 ## Features
 
 - **Multi-packet pings**: Send multiple ICMP packets per probe request

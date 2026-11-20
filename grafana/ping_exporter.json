@@ -99,7 +99,9 @@
           },
           "expr": "count(probe_success{job=~\"$job\"})",
           "legendFormat": "",
-          "refId": "A"
+          "refId": "A",
+          "instant": true,
+          "range": false
         }
       ],
       "gridPos": {
@@ -156,7 +158,9 @@
           },
           "expr": "sum(probe_success{job=~\"$job\"})",
           "legendFormat": "",
-          "refId": "A"
+          "refId": "A",
+          "instant": true,
+          "range": false
         }
       ],
       "gridPos": {
@@ -212,7 +216,9 @@
           },
           "expr": "count(probe_success{job=~\"$job\"} == 0) or vector(0)",
           "legendFormat": "",
-          "refId": "A"
+          "refId": "A",
+          "instant": true,
+          "range": false
         }
       ],
       "gridPos": {
@@ -273,7 +279,9 @@
           },
           "expr": "avg(probe_success{job=~\"$job\"})",
           "legendFormat": "",
-          "refId": "A"
+          "refId": "A",
+          "instant": true,
+          "range": false
         }
       ],
       "gridPos": {
@@ -340,7 +348,9 @@
           },
           "expr": "quantile(0.5, probe_ping_rtt_seconds{job=~\"$job\", type=\"mean\"})",
           "legendFormat": "",
-          "refId": "A"
+          "refId": "A",
+          "instant": true,
+          "range": false
         }
       ],
       "gridPos": {
